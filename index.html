@@ -2,8 +2,11 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#07111c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Submarino D21 v19</title>
 <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Submarino%20D21%22%2C%22display%22%3A%22fullscreen%22%2C%22orientation%22%3A%22landscape%22%2C%22background_color%22%3A%22%2307111c%22%2C%22theme_color%22%3A%22%2307111c%22%7D">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%2307111c' width='32' height='32'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Arial Black,Arial' font-size='11' fill='%23FFE600'%3Ed21%3C/text%3E%3C/svg%3E">
@@ -22,16 +25,39 @@
   font-style: normal;
   font-display: swap;
 }
+:root {
+  --sat: env(safe-area-inset-top);
+  --sar: env(safe-area-inset-right);
+  --sab: env(safe-area-inset-bottom);
+  --sal: env(safe-area-inset-left);
+}
 html, body {
   margin: 0;
+  width: 100%;
   height: 100%;
+  height: -webkit-fill-available;
+  height: 100dvh;
+  position: fixed;
+  inset: 0;
   background: #07111c;
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
-* { -webkit-tap-highlight-color: transparent; user-select: none; }
-#stage { position: fixed; inset: 0; }
+* { -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  height: -webkit-fill-available;
+  height: 100dvh;
+  overflow: hidden;
+  touch-action: none;
+}
 #c {
   width: 100%;
   height: 100%;
@@ -326,30 +352,35 @@ window.D21 = {
       note: "CC0 1.0 a 180 BPM, el techo del modo Z. Ningún otro modo pasa de 140 BPM, así que Z sigue siendo el más rápido. Uso político permitido por CC0, sin cláusula extra en OpenGameArt."
     }
   ],
-  // Premios que caen al hundir un barco o derribar un avión. Añade aquí más eslóganes reales.
+  // Palabras cortas de los lemas de la portada https://democracia21.es
+  // CAMBIO se mantiene porque el juego ya lo usa como potenciador verde.
+  lemas: [
+    "CAMBIO",
+    "PODER",
+    "LIMPIEZA",
+    "SIN LETRA",
+    "SUBMARINO",
+    "OTRA",
+    "MODERNIZAR",
+    "CLARAS",
+    "ERES 21",
+    "SOLUCIONES",
+    "SERVICIO",
+    "SIGLO 21"
+  ],
   premios: [
-    "Ya somos 4000 en este submarino",
-    "Somos TU submarino",
-    "La otra política",
-    "El poder es tuyo",
-    "Por una limpieza política radical",
-    "Sin letra pequeña",
-    "Sube al submarino amarillo",
-    "La España que merecemos",
-    "Volver a creer",
-    "Venimos a unir, no a dividir",
-    "21 es el siglo que toca",
-    "21 es lo que sigue",
-    "Ya hemos llegado y no hay quien lo pare",
-    "La política, por fin, en el siglo que toca",
-    "Nosotros te buscamos a ti",
-    "España Limpia",
-    "Si has llegado hasta aquí, ya eres 21",
-    "España Resuelve",
-    "España Prospera",
-    "España Cuida",
-    "España Lidera",
-    "Tu submarino"
+    "CAMBIO",
+    "PODER",
+    "LIMPIEZA",
+    "SIN LETRA",
+    "SUBMARINO",
+    "OTRA",
+    "MODERNIZAR",
+    "CLARAS",
+    "ERES 21",
+    "SOLUCIONES",
+    "SERVICIO",
+    "SIGLO 21"
   ],
   criticas: [
     { mal: "La gente no os conoce", bien: "Nosotros conocemos a la gente", tipo: "a" },
@@ -428,6 +459,12 @@ window.D21 = {
 (() => {
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d", { alpha: false });
+  let filterOk = !(/AppleWebKit/.test(navigator.userAgent || "") && !/Chrome|CriOS|Edg|Android/.test(navigator.userAgent || ""));
+  function setFilter(v) {
+    if (!filterOk) return;
+    try { ctx.filter = v; }
+    catch (e) { filterOk = false; }
+  }
   if (!ctx) return;
 
   const PACK = window.D21 || { version: "v19", date: "19/11/2026", modes: [], tracks: [], criticas: [], problemas: [], esloganes: {} };
@@ -504,6 +541,8 @@ window.D21 = {
   let lastTorpBeat = -999;
   let joy = null;
   let drag = null;
+  let moveId = null;
+  const fingers = new Map();
   let banner = null;
   let dyingUntil = 0;
   let audio = null;
@@ -563,7 +602,7 @@ window.D21 = {
 
   const downKeys = new Set();
   const hits = [];
-  const player = { x: 200, y: 400, facing: 1, alive: true, invUntil: 0, cambioUntil: 0 };
+  const player = { x: 200, y: 400, facing: 1, alive: true, invUntil: 0, cambioUntil: 0, shield: 0, rapidUntil: 0 };
   let ships = [];
   let planes = [];
   let mines = [];
@@ -595,34 +634,139 @@ window.D21 = {
     return bytes.buffer;
   }
   const MUSIC_PACK = window.MUSIC_PACK || {};
+  const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  let musicProbe = null;
+  let silentEl = null;
+  function canPlay(type) {
+    try {
+      if (!musicProbe) musicProbe = document.createElement("audio");
+      return !!musicProbe.canPlayType(type);
+    } catch (e) { return false; }
+  }
+  function isWebKit() {
+    const ua = navigator.userAgent || "";
+    return /AppleWebKit/.test(ua) && !/Chrome|CriOS|Edg|OPR|FxiOS|Android/.test(ua);
+  }
+  function musicCandidates(track) {
+    const file = track.file || "";
+    const alt = file.replace(/\.(ogg|flac)$/i, ".mp3");
+    const skipped = track.skipped || [];
+    const list = [];
+    const push = (f) => { if (f && list.indexOf(f) < 0 && skipped.indexOf(f) < 0) list.push(f); };
+    if (alt === file) { push(file); return list; }
+    const oggOk = canPlay('audio/ogg; codecs="vorbis"');
+    const flacOk = canPlay("audio/flac") || canPlay("audio/x-flac");
+    const needsAlt = isWebKit() || (/\.ogg$/i.test(file) && !oggOk) || (/\.flac$/i.test(file) && !flacOk);
+    if (needsAlt) { push(alt); push(file); }
+    else { push(file); push(alt); }
+    return list;
+  }
   function loadTrackFile(track) {
     if (!track) return Promise.resolve(null);
     if (track.buffer || track.pending) return Promise.resolve(track.pending || track.buffer);
     if (track.loading) return track.loading;
-    if (MUSIC_PACK[track.id]) {
+    if (MUSIC_PACK[track.id] && !(track.skipped && track.skipped.length)) {
       try { track.pending = decodeDataUrl(MUSIC_PACK[track.id]); }
       catch (e) { track.failed = true; return Promise.resolve(null); }
       return Promise.resolve(track.pending);
     }
     const http = location.protocol === "http:" || location.protocol === "https:";
     if (!http) { track.failed = true; return Promise.resolve(null); }
+    const files = musicCandidates(track);
+    const tryAt = (i) => {
+      if (i >= files.length) {
+        track.failed = true;
+        track.loading = null;
+        musicState = "failed";
+        return Promise.resolve(null);
+      }
+      const url = new URL(ASSET_BASE + files[i], document.baseURI).href;
+      return fetch(url).then((r) => {
+        if (!r.ok) throw new Error("music");
+        return r.arrayBuffer();
+      }).then((buf) => {
+        track.pending = buf;
+        track.fileUsed = files[i];
+        track.loading = null;
+        musicState = "ready";
+        return buf;
+      }).catch(() => tryAt(i + 1));
+    };
     musicState = "loading";
-    const url = new URL(ASSET_BASE + track.file, document.baseURI).href;
-    track.loading = fetch(url).then((r) => {
-      if (!r.ok) throw new Error("music");
-      return r.arrayBuffer();
-    }).then((buf) => {
-      track.pending = buf;
-      track.loading = null;
-      musicState = "ready";
-      return buf;
-    }).catch(() => {
-      track.failed = true;
-      track.loading = null;
-      musicState = "failed";
-      return null;
-    });
+    track.loading = tryAt(0);
     return track.loading;
+  }
+  function ensureAudio() {
+    if (audio) return audio;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try { audio = new AC(); } catch (e) { return null; }
+    audio.addEventListener("statechange", () => {
+      if (!audio) return;
+      if (audio.state === "interrupted") {
+        const pending = audio.resume && audio.resume();
+        if (pending && pending.catch) pending.catch(() => {});
+      }
+      if (audio.state === "running" && !source && musicBuffer && (mode === "intro" || mode === "play" || mode === "pause")) {
+        try { startBuffer(musicBuffer, currentTrack(), true); } catch (e) {}
+      }
+    });
+    return audio;
+  }
+  function armPlaybackSession() {
+    try {
+      if (navigator.audioSession && typeof navigator.audioSession.type === "string") {
+        navigator.audioSession.type = "playback";
+        return;
+      }
+    } catch (e) {}
+    if (!audio) return;
+    if (!silentEl) {
+      silentEl = document.createElement("audio");
+      silentEl.setAttribute("playsinline", "");
+      silentEl.setAttribute("webkit-playsinline", "");
+      silentEl.loop = true;
+      silentEl.volume = 0.01;
+      silentEl.src = SILENT_WAV;
+    }
+    const pending = silentEl.play();
+    if (pending && pending.catch) pending.catch(() => {});
+  }
+  function playSilentBuffer() {
+    if (!audio) return;
+    try {
+      const buf = audio.createBuffer(1, 1, audio.sampleRate || 22050);
+      const src = audio.createBufferSource();
+      src.buffer = buf;
+      src.connect(audio.destination);
+      src.start(0);
+    } catch (e) {}
+  }
+  function detachUnlock() {
+    window.removeEventListener("touchstart", unlockAudio, true);
+    window.removeEventListener("touchend", unlockAudio, true);
+    window.removeEventListener("click", unlockAudio, true);
+  }
+  function unlockAudio() {
+    const ctx = ensureAudio();
+    armPlaybackSession();
+    if (!ctx) return;
+    playSilentBuffer();
+    let pending = null;
+    try { pending = ctx.resume && ctx.resume(); } catch (e) {}
+    const after = () => {
+      if (ctx.state === "interrupted") {
+        try { ctx.resume(); } catch (e) {}
+      }
+      if (ctx.state === "running") {
+        detachUnlock();
+        if (!source && musicBuffer && (mode === "intro" || mode === "play" || mode === "pause")) {
+          try { startBuffer(musicBuffer, currentTrack(), true); } catch (e) {}
+        }
+      }
+    };
+    if (pending && pending.then) pending.then(after).catch(after);
+    else after();
   }
   const SPRITE_SRC = {
     sub: "assets/sprites/sub.webp",
@@ -696,9 +840,14 @@ window.D21 = {
   }
   function waterY() { return lerp(h * 0.68, playWater(), dipT()); }
   function bedY() { return lerp(Math.max(h * 1.05, playBed() + 40), playBed(), dipT()); }
+  let perfEpoch = null;
   function beatNow() {
-    if (!audio || musicEpoch == null) return 0;
-    return (audio.currentTime - musicEpoch - beatOffset) / BEAT;
+    const wall = perfEpoch == null ? 0 : (performance.now() - perfEpoch) / 1000 / BEAT - beatOffset;
+    if (audio && musicEpoch != null && audio.state === "running") {
+      const ab = (audio.currentTime - musicEpoch - beatOffset) / BEAT;
+      if (ab + 0.4 >= wall) return ab;
+    }
+    return wall;
   }
   function oleadaNow() { return 1 + Math.floor(Math.max(0, beatNow()) / PHRASE); }
   function groove() {
@@ -892,8 +1041,17 @@ window.D21 = {
       problem: takeSlogan(color), flashUntil: 0
     });
   }
+  function wavePlan(o) {
+    const n = Math.max(1, o | 0);
+    if (n <= 1) return { planeCap: 0, bombs: 0, bombEvery: 8, minesEvery: 6, homeTurn: 1.1, homeSpeed: 110, homeLife: 6 };
+    if (n === 2) return { planeCap: 1, bombs: 1, bombEvery: 6, minesEvery: 6, homeTurn: 1.25, homeSpeed: 130, homeLife: 6.5 };
+    if (n === 3) return { planeCap: 2, bombs: 1, bombEvery: 5, minesEvery: 5, homeTurn: 1.5, homeSpeed: 150, homeLife: 7 };
+    if (n === 4) return { planeCap: 2, bombs: 2, bombEvery: 4, minesEvery: 4, homeTurn: 1.8, homeSpeed: 168, homeLife: 7.5 };
+    return { planeCap: 3, bombs: 3, bombEvery: 3, minesEvery: 3, homeTurn: 2.05, homeSpeed: 186, homeLife: 8 };
+  }
   function trySpawnPlane(kind) {
-    if (holdSpawns || planes.length >= 2) return;
+    const cap = wavePlan(oleadaNow()).planeCap;
+    if (holdSpawns || cap <= 0 || planes.length >= cap) return;
     const dir = kind === "green" ? 1 : -1;
     const o = oleadaNow();
     const color = kind === "green" ? "green" : "purple";
@@ -941,7 +1099,7 @@ window.D21 = {
     launchFromShip(live[hardCursor % live.length]);
   }
   function spawnMissileAt(x, pair, y0, color, owner, motion) {
-    if (missiles.length >= 5) return;
+    if (missiles.length >= 6) return;
     const y = y0 == null ? planeY() + 18 : y0;
     const surface = waterY();
     missiles.push({
@@ -955,13 +1113,17 @@ window.D21 = {
       sway: Math.random() * Math.PI * 2, t0: beatNow(), v: 40
     });
   }
-  function dropMissiles() {
+  function dropMissiles(n) {
     if (holdSpawns) return;
+    const count = Math.max(1, n || 1);
     for (const p of planes) {
-      const x = planeX(p);
-      if (x < 30 || x > w - 30) continue;
+      const base = planeX(p);
+      if (base < 30 || base > w - 30) continue;
       const vx = p.dir * p.speed / Math.max(0.2, BEAT);
-      spawnMissileAt(x, p.problem, planeY(p) + 16, p.kind, p, { vx, vy: 30, spinV: p.dir * 1.6 });
+      for (let i = 0; i < count; i++) {
+        const x = base + (i - (count - 1) / 2) * 16;
+        spawnMissileAt(x, p.problem, planeY(p) + 16, p.kind, p, { vx, vy: 30, spinV: p.dir * 1.6 });
+      }
     }
   }
   function releaseAirCharges(owner) {
@@ -986,22 +1148,29 @@ window.D21 = {
     convertir(obj.x, y, obj.pair, obj.bomb ? 150 : 100);
     burst(obj.x, y, "#FFE600", 8);
   }
-  let premioBag = [];
-  function nextPremio() {
-    if (!premioBag.length) {
-      premioBag = PREMIOS.slice();
-      for (let i = premioBag.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        const swap = premioBag[i];
-        premioBag[i] = premioBag[j];
-        premioBag[j] = swap;
-      }
-    }
-    return premioBag.pop();
+  const LEMAS = (window.D21 && window.D21.lemas && window.D21.lemas.length) ? window.D21.lemas : ["CAMBIO", "PODER", "LIMPIEZA"];
+  let lemaCursor = 0;
+  function nextLema() {
+    const word = LEMAS[lemaCursor % LEMAS.length];
+    lemaCursor += 1;
+    return word;
   }
-  function dropPremio(x, y) {
-    if (!PREMIOS.length) return;
-    premios.push({ x, y0: y, t0: beatNow(), v: Math.max(46, (bedY() - y) / 7), text: nextPremio() });
+  function dropLema(x, y) {
+    premios.push({
+      x, y0: y, t0: beatNow(),
+      v: Math.max(46, (bedY() - y) / 7),
+      word: nextLema()
+    });
+  }
+  function grantExtra() {
+    const bag = ["escudo", "vida", "recupera", "fuego"];
+    const extra = bag[Math.floor(Math.random() * bag.length)];
+    if (extra === "escudo") player.shield = 1;
+    else if (extra === "vida") lives = Math.min(5, lives + 1);
+    else if (extra === "recupera") { if (lives < 3) lives += 1; }
+    else player.rapidUntil = beatNow() + 8 / BEAT;
+    const label = extra === "escudo" ? "escudo" : extra === "vida" ? "vida extra" : extra === "recupera" ? "vida recuperada" : "disparo rápido";
+    return label;
   }
   function onGrid(halfIndex) {
     if (mode !== "play") return;
@@ -1015,10 +1184,12 @@ window.D21 = {
       if (ph === 0 || ph === 8) trySpawnShip(ph === 0 ? "blue" : "red");
       if (ph === 4) trySpawnShip("red");
       if (ph === 12) trySpawnShip("blue");
-      if (oleada >= 2 && ph === 2) trySpawnPlane("green");
-      if (oleada >= 2 && ph === 10) trySpawnPlane("purple");
-      if (beatIndex >= INTRO_BEATS + 4 && beatIndex % 4 === 0) dropMines();
-      if (oleada >= 2 && beatIndex % 4 === 2) dropMissiles();
+      const plan = wavePlan(oleada);
+      if (plan.planeCap >= 1 && ph === 2) trySpawnPlane("green");
+      if (plan.planeCap >= 2 && ph === 10) trySpawnPlane("purple");
+      if (plan.planeCap >= 3 && ph === 6) trySpawnPlane("green");
+      if (beatIndex >= INTRO_BEATS + 4 && beatIndex % plan.minesEvery === 0) dropMines();
+      if (plan.bombs > 0 && beatIndex % plan.bombEvery === 2) dropMissiles(plan.bombs);
       if (beatIndex >= 64 && beatIndex % 64 === 0) spawnCambio(null);
       if (beatIndex >= PHRASE && beatIndex % PHRASE === 0) {
         banner = { text: "Oleada " + (1 + beatIndex / PHRASE), until: beatNow() + 2.4 };
@@ -1054,7 +1225,7 @@ window.D21 = {
     });
     sfxPower();
     shake = Math.max(shake, 7);
-    dropPremio(s.frozenX, waterY() + 18);
+    dropLema(s.frozenX, waterY() + 18);
     if (Math.random() < 0.32) spawnCambio(s.frozenX);
   }
   function killPlane(p) {
@@ -1074,11 +1245,18 @@ window.D21 = {
     });
     sfxPower();
     shake = Math.max(shake, 5);
-    dropPremio(x, y + 20);
+    dropLema(x, y + 20);
   }
   function hurt() {
     if (mode !== "play" || !player.alive) return;
     if (cambioOn() || beatNow() < player.invUntil) return;
+    if (player.shield > 0) {
+      player.shield = 0;
+      player.invUntil = beatNow() + 1.2;
+      shake = 8;
+      sfxClank();
+      return;
+    }
     lives -= 1;
     shake = 16;
     hitFlash = 1;
@@ -1120,34 +1298,40 @@ window.D21 = {
       const tube = tubes[i];
       const ty = tube.y0 - (beatNow() - tube.t0) * tube.v;
       let used = false;
-      let bestY = -1;
-      let bestMine = -1;
-      let bestShip = null;
-      for (let j = 0; j < mines.length; j++) {
-        const m = mines[j];
+      const reach = 16 * speedScale();
+      let best = null;
+      let bestD = 1e9;
+      function consider(x, y, apply) {
+        const d = dist2(tube.x, ty, x, y);
+        if (d < reach * reach && d < bestD) { bestD = d; best = apply; }
+      }
+      for (const m of mines) {
         if (m.dying) continue;
-        const my = mineY(m);
-        if (dist2(tube.x, ty, m.x, my) > (14 * speedScale() + hazardR()) * (14 * speedScale() + hazardR())) continue;
-        if (my > bestY) { bestY = my; bestMine = j; bestShip = null; }
+        consider(m.x, mineY(m), () => flashHazard(m, mineY(m)));
+      }
+      for (const m of missiles) {
+        if (m.dying) continue;
+        consider(m.x, missileY(m), () => flashHazard(m, missileY(m)));
+      }
+      for (const p of planes) {
+        consider(planeX(p), planeY(p), () => hitPlane(p));
       }
       for (const s of ships) {
         if (s.dead) continue;
         if (!circleRect(tube.x, ty, 12 * speedScale(), keelRect(s))) continue;
-        const sy = waterY();
-        if (sy > bestY) { bestY = sy; bestMine = -1; bestShip = s; }
+        const d = dist2(tube.x, ty, shipX(s), waterY());
+        if (d < bestD) {
+          bestD = d;
+          best = () => {
+            s.hp -= 1;
+            s.flashUntil = beatNow() + 0.35;
+            if (s.hp <= 0) killShip(s);
+            else sfxPop();
+          };
+        }
       }
-      if (bestMine >= 0) {
-        const m = mines[bestMine];
-        flashHazard(m, mineY(m));
-        used = true;
-      } else if (bestShip) {
-        bestShip.hp -= 1;
-        bestShip.flashUntil = beatNow() + 0.35;
-        used = true;
-        if (bestShip.hp <= 0) killShip(bestShip);
-        else sfxPop();
-      }
-      if (used || ty < waterY() - 30) tubes.splice(i, 1);
+      if (best) { best(); used = true; }
+      if (used || ty < -40) tubes.splice(i, 1);
     }
     for (let i = cambios.length - 1; i >= 0; i--) {
       const c = cambios[i];
@@ -1166,10 +1350,11 @@ window.D21 = {
       if (py > bedY() + 20) { premios.splice(i, 1); continue; }
       if (dist2(player.x, player.y, p.x, py) < (playerR() + 28) * (playerR() + 28)) {
         premios.splice(i, 1);
+        const label = grantExtra();
         const mult = cambioOn() ? 2 : 1;
-        score += 500 * mult;
+        score += 200 * mult;
         noteScore();
-        popups.push({ x: p.x, y: py, t0: beatNow(), text: "+500", lime: true });
+        banner = { text: (p.word || "PREMIO") + " · " + label, until: beatNow() + 2.4 };
         sfxPower();
       }
     }
@@ -1411,12 +1596,40 @@ window.D21 = {
       if (m.y >= surface && m.vy > 0) {
         m.y = surface + 1;
         m.phase = "water";
-        m.vy = 24;
-        m.vx = (m.vx || 0) * 0.12;
         m.splashed = true;
         m.splashT = beatNow();
         splashAt(m.x, surface);
+        if (m.bomb) {
+          m.waterAt = beatNow();
+          m.heading = Math.atan2(player.x - m.x, player.y - m.y);
+          m.homeColor = m.color === "purple" ? "red" : "blue";
+          return;
+        }
+        m.vy = 24;
+        m.vx = (m.vx || 0) * 0.12;
       }
+      return;
+    }
+    if (m.bomb) {
+      const plan = wavePlan(oleadaNow());
+      if (!m.waterAt) m.waterAt = beatNow();
+      if (beatNow() - m.waterAt > plan.homeLife / BEAT) {
+        const list = missiles;
+        const i = list.indexOf(m);
+        if (i >= 0) list.splice(i, 1);
+        return;
+      }
+      const want = Math.atan2(player.x - m.x, player.y - m.y);
+      let diff = want - (m.heading || want);
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const maxTurn = plan.homeTurn * dt;
+      m.heading = (m.heading || want) + clamp(diff, -maxTurn, maxTurn);
+      const spd = plan.homeSpeed;
+      m.vx = Math.sin(m.heading) * spd;
+      m.vy = Math.cos(m.heading) * spd;
+      m.x += m.vx * dt;
+      m.y = clamp(m.y + m.vy * dt, surface + 6, bedY() - 12);
       return;
     }
     m.phase = "water";
@@ -1447,26 +1660,20 @@ window.D21 = {
     const b = beatNow();
     const idx = Math.floor(b + 0.05);
     if (idx <= shotGate || b > idx + 0.2) return;
+    const cap = b < player.rapidUntil ? 2 : 1;
+    if (tubes.length >= cap) return;
     shotGate = idx;
     shots += 1;
-    if (idx % 2 === 0) {
-      const tgt = pickLaserTarget();
-      fireBolt(tgt ? tgt.ang : 0);
-    }
     tubes.push({
       x: player.x,
       y0: player.y - 10 * subScale(),
       t0: b,
-      v: Math.max(90, (player.y - waterY()) / 1.6)
+      v: Math.max(90, (player.y + 80) / 1.5)
     });
     sfxTorp();
   }
   const arrowHolds = new Map();
-  function showPads() {
-    if (!inMatch()) return false;
-    if (window.matchMedia("(pointer: coarse)").matches || touchSeen) return true;
-    return w < 1200;
-  }
+  function showPads() { return false; }
   function padSize() {
     const sea = Math.max(64, Math.min(bedY(), h - 6) - waterY());
     return Math.max(34, Math.min(56, sea / 3.5));
@@ -1530,23 +1737,16 @@ window.D21 = {
     if (downKeys.has("ArrowRight") || downKeys.has("KeyD")) x += 1;
     if (downKeys.has("ArrowUp") || downKeys.has("KeyW")) y -= 1;
     if (downKeys.has("ArrowDown") || downKeys.has("KeyS")) y += 1;
-    for (const dir of arrowHolds.values()) {
-      if (dir === "left") x -= 1;
-      if (dir === "right") x += 1;
-      if (dir === "up") y -= 1;
-      if (dir === "down") y += 1;
-    }
     if (x || y) {
       const m = Math.hypot(x, y);
       return { x: x / m, y: y / m };
     }
-    if (joy) return { x: joy.dx, y: joy.dy };
     if (drag) {
       const dx = drag.x - player.x;
       const dy = drag.y - player.y;
       const m = Math.hypot(dx, dy);
-      if (m < 26) return { x: 0, y: 0 };
-      const k = Math.min(1, (m - 26) / 70);
+      if (m < 8) return { x: 0, y: 0 };
+      const k = Math.min(1, m / 90);
       return { x: (dx / m) * k, y: (dy / m) * k };
     }
     return { x: 0, y: 0 };
@@ -1589,9 +1789,9 @@ window.D21 = {
     const v = inputVec();
     const sp = 420 * speedScale();
     const band = subLimits();
-    const inset = showPads() ? 8 + padSize() + 12 : 18;
+    const inset = 18;
     player.x = clamp(player.x + v.x * sp * dt, inset, w - inset);
-    player.y = clamp(player.y + v.y * sp * 0.72 * dt, band.top, band.bot);
+    player.y = clamp(player.y + v.y * sp * dt, band.top, band.bot);
     if (v.x > 0.25) player.facing = 1;
     if (v.x < -0.25) player.facing = -1;
     autoWeapons();
@@ -1830,6 +2030,7 @@ window.D21 = {
       musicFailed = false;
     }
     musicEpoch = when - carried * BEAT;
+    perfEpoch = performance.now() - carried * BEAT * 1000;
     lastAudioT = audio.currentTime;
     if (keepBeat) lastHalf = carried * 2;
     else lastHalf = -1;
@@ -1838,11 +2039,18 @@ window.D21 = {
     if (!track) return Promise.resolve(null);
     if (track.buffer) return Promise.resolve(track.buffer);
     if (!track.pending) return Promise.resolve(null);
-    if (!audio) audio = new AudioContext();
+    if (!ensureAudio()) return Promise.resolve(null);
     const copy = track.pending.slice(0);
     return audio.decodeAudioData(copy).then((buf) => {
       track.buffer = buf;
       return buf;
+    }).catch(() => {
+      track.skipped = track.skipped || [];
+      if (track.fileUsed && track.skipped.indexOf(track.fileUsed) < 0) track.skipped.push(track.fileUsed);
+      track.pending = null;
+      track.loading = null;
+      if (!musicCandidates(track).length) return null;
+      return loadTrackFile(track).then(() => track.pending ? decodeTrack(track) : null);
     });
   }
   function musicMiss(track) {
@@ -1870,13 +2078,18 @@ window.D21 = {
     player.alive = true;
     player.invUntil = 0;
     player.cambioUntil = 0;
+    player.shield = 0;
+    player.rapidUntil = 0;
     player.facing = 1;
+    lemaCursor = 0;
+    Object.keys(trackHeard).forEach((id) => { delete trackHeard[id]; });
+    trackStamp = performance.now();
+    trackStampId = selectedTrackId || "";
     ships = [makeShip("blue", 1), makeShip("red", -1)];
     planes = [];
     mines = [];
     missiles = [];
     premios = [];
-    premioBag = [];
     torps = [];
     tubes = [];
     beams = [];
@@ -1910,7 +2123,7 @@ window.D21 = {
   }
   function begin() {
     if (mode !== "title" && mode !== "over") return;
-    try { if (!audio) audio = new AudioContext(); } catch (e) {}
+    try { ensureAudio(); } catch (e) {}
     try { startBuffer(null, currentTrack(), false); } catch (e) {}
     try {
       resetMatch();
@@ -1926,17 +2139,49 @@ window.D21 = {
         musicState = "failed";
       });
     };
+    try { unlockAudio(); } catch (e) {}
     try {
       const pending = audio && audio.resume && audio.resume();
-      if (pending && pending.then) pending.then(kick).catch(kick);
-      else kick();
+      const done = () => {
+        kick();
+        if (audio && audio.state !== "running") {
+          toast = { text: "Toca la pantalla para activar el sonido", until: 0, wall: performance.now() + 3200 };
+        }
+      };
+      if (pending && pending.then) pending.then(done).catch(done);
+      else done();
     } catch (e) { kick(); }
   }
   function showToast(track) {
     if (!track) return;
     toast = { text: track.title + " – " + track.author, until: (musicEpoch == null ? 0 : beatNow()) + 2.6, wall: performance.now() + 2600 };
   }
+  const trackHeard = {};
+  let trackStamp = 0;
+  let trackStampId = "";
+  function noteTrackTime() {
+    const now = performance.now();
+    if (trackStamp && trackStampId && (mode === "intro" || mode === "play" || mode === "pause" || mode === "dying")) {
+      trackHeard[trackStampId] = (trackHeard[trackStampId] || 0) + Math.max(0, now - trackStamp);
+    }
+    trackStamp = now;
+    trackStampId = selectedTrackId || "";
+  }
+  function topTrack() {
+    noteTrackTime();
+    let best = "";
+    let bestMs = -1;
+    Object.keys(trackHeard).forEach((id) => {
+      if (trackHeard[id] > bestMs) { bestMs = trackHeard[id]; best = id; }
+    });
+    return TRACKS.find((t) => t.id === best) || currentTrack();
+  }
+  function modeLabel() {
+    const m = MODES.find((item) => item.id === speedMode);
+    return m ? m.name : speedMode;
+  }
   function selectTrackById(id) {
+    noteTrackTime();
     const track = TRACKS.find((t) => t.id === id);
     if (!track) return;
     const same = track.id === selectedTrackId;
@@ -1956,6 +2201,7 @@ window.D21 = {
   }
   function setSpeed(id) {
     if (!MODES.some((m) => m.id === id)) return;
+    noteTrackTime();
     const same = id === speedMode;
     const live = inMatch();
     if (!same) {
@@ -2046,56 +2292,67 @@ window.D21 = {
     return dx * dx + dy * dy <= (c.r + pad) * (c.r + pad);
   }
   function posOf(e) {
-    if (e.target === canvas && Number.isFinite(e.offsetX) && Number.isFinite(e.offsetY)) {
-      const sx = canvas.clientWidth || w;
-      const sy = canvas.clientHeight || h;
-      return { x: e.offsetX * (w / sx), y: e.offsetY * (h / sy) };
-    }
+    const t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+    const turned = document.documentElement.classList.contains("turned");
     const r = canvas.getBoundingClientRect();
-    if (!document.documentElement.classList.contains("turned")) {
+    if (!turned) {
+      if (t.target === canvas && Number.isFinite(t.offsetX) && Number.isFinite(t.offsetY)) {
+        const sx = canvas.clientWidth || w;
+        const sy = canvas.clientHeight || h;
+        return { x: t.offsetX * (w / sx), y: t.offsetY * (h / sy) };
+      }
       return {
-        x: (e.clientX - r.left) * (w / (r.width || w)),
-        y: (e.clientY - r.top) * (h / (r.height || h))
+        x: ((t.clientX - r.left) / (r.width || w)) * w,
+        y: ((t.clientY - r.top) / (r.height || h)) * h
       };
     }
-    const vw = window.innerWidth;
+    const vx = t.clientX - r.left;
+    const vy = t.clientY - r.top;
     return {
-      x: (e.clientY - r.top) * (w / (window.innerHeight || w)),
-      y: (vw - e.clientX) * (h / (vw || h))
+      x: (vy / (r.height || 1)) * w,
+      y: ((r.width - vx) / (r.width || 1)) * h
     };
   }
-  function onDown(e) {
-    e.preventDefault();
-    const p = posOf(e);
-    const pad = padAt(p);
-    if (pad && mode === "play") {
-      arrowHolds.set(e.pointerId, pad);
-      touchSeen = true;
-      return;
-    }
-    if (pointIn(p, mutePos(), 6)) { toggleMute(); return; }
-    if ((mode === "intro" || mode === "play" || mode === "pause") && pointIn(p, pausePos(), 6)) {
-      togglePause();
-      return;
-    }
-    const id = hitAt(p.x, p.y);
-    if (id === "play" && mode === "title") { try { lockLandscape(); } catch (err) {} begin(); return; }
-    if (id === "again" && mode === "over") { begin(); return; }
-    if (id === "resume" && mode === "pause") { togglePause(); return; }
-    if (id === "credits" && (mode === "title" || mode === "over")) { mode = "credits"; sfxUi(); return; }
-    if (id === "back" && mode === "credits") { mode = "title"; sfxUi(); return; }
-    if (id && id.indexOf("mode-") === 0) { setSpeed(id.slice(5)); return; }
-    if (id === "music") { toggleMusic(); lockLandscape(); return; }
-    if (id === "tracks") { tracksOpen = !tracksOpen; sfxUi(); return; }
+  function uiControl(p) {
+    if (pointIn(p, mutePos(), 8)) return "mute";
+    if ((mode === "intro" || mode === "play" || mode === "pause") && pointIn(p, pausePos(), 8)) return "pause";
+    return hitAt(p.x, p.y);
+  }
+  function useControl(id) {
+    if (id === "mute") { toggleMute(); return true; }
+    if (id === "pause") { togglePause(); return true; }
+    if (id === "play" && mode === "title") { try { lockLandscape(); } catch (err) {} begin(); return true; }
+    if (id === "again" && mode === "over") { begin(); return true; }
+    if (id === "resume" && mode === "pause") { togglePause(); return true; }
+    if (id === "credits" && (mode === "title" || mode === "over")) { mode = "credits"; sfxUi(); return true; }
+    if (id === "back" && mode === "credits") { mode = "title"; sfxUi(); return true; }
+    if (id && id.indexOf("mode-") === 0) { setSpeed(id.slice(5)); return true; }
+    if (id === "music") { toggleMusic(); try { lockLandscape(); } catch (err) {} return true; }
+    if (id === "tracks") { tracksOpen = !tracksOpen; sfxUi(); return true; }
     if (id && id.indexOf("track-") === 0) {
       selectTrackById(id.slice(6));
       if (columnLayout().collapsed) tracksOpen = false;
+      return true;
+    }
+    return false;
+  }
+  function onDown(e) {
+    if (e.cancelable) e.preventDefault();
+    const p = posOf(e);
+    const ui = uiControl(p);
+    if (ui && useControl(ui)) {
+      fingers.set(e.pointerId, { ui: true });
       return;
     }
+    if (inMatch() && !fullscreenOn()) { try { lockLandscape(); } catch (err) {} }
     if (mode === "intro") { skipIntro(); return; }
     if (mode !== "play") return;
     touchSeen = true;
-    drag = { id: e.pointerId, x: p.x, y: p.y };
+    fingers.set(e.pointerId, { ui: false, x: p.x, y: p.y });
+    if (moveId == null) {
+      moveId = e.pointerId;
+      drag = { id: e.pointerId, x: p.x, y: p.y };
+    }
   }
   function aimJoy(p) {
     if (!joy) return;
@@ -2108,22 +2365,27 @@ window.D21 = {
     joy.dy = (dy / m) * k;
   }
   function onMove(e) {
-    if (arrowHolds.has(e.pointerId)) {
-      const p = posOf(e);
-      const pad = padAt(p);
-      if (pad) arrowHolds.set(e.pointerId, pad);
-      return;
-    }
+    if (e.cancelable) e.preventDefault();
+    const held = fingers.get(e.pointerId);
+    if (!held || held.ui) return;
     const p = posOf(e);
-    if (joy && e.pointerId === joy.id) aimJoy(p);
-    if (drag && e.pointerId === drag.id) { drag.x = p.x; drag.y = p.y; }
+    held.x = p.x;
+    held.y = p.y;
+    if (moveId === e.pointerId) drag = { id: e.pointerId, x: p.x, y: p.y };
   }
   function onUp(e) {
-    arrowHolds.delete(e.pointerId);
-    if (firePointer === e.pointerId) { firePointer = null; fireHeld = false; }
-    if (torpPointer === e.pointerId) torpPointer = null;
-    if (joy && joy.id === e.pointerId) joy = null;
-    if (drag && drag.id === e.pointerId) drag = null;
+    fingers.delete(e.pointerId);
+    if (moveId === e.pointerId) {
+      moveId = null;
+      drag = null;
+      for (const [id, finger] of fingers) {
+        if (!finger.ui) {
+          moveId = id;
+          drag = { id, x: finger.x, y: finger.y };
+          break;
+        }
+      }
+    }
   }
 
   function roundRect(x, y, bw, bh, r) {
@@ -2281,10 +2543,10 @@ window.D21 = {
     ctx.translate(cx, cy);
     if (flipX) ctx.scale(-1, 1);
     ctx.globalAlpha = alpha == null ? 1 : alpha;
-    ctx.filter = "brightness(0)";
+    setFilter("brightness(0)");
     const ring = [[o, 0], [-o, 0], [0, o], [0, -o], [o, o], [-o, -o], [o, -o], [-o, o]];
     for (const d of ring) ctx.drawImage(img, -dw / 2 + d[0], -dh / 2 + d[1], dw, dh);
-    ctx.filter = bright ? "brightness(1.18) saturate(1.25)" : "none";
+    setFilter(bright ? "brightness(1.18) saturate(1.25)" : "none");
     ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
     return true;
@@ -3106,6 +3368,43 @@ window.D21 = {
     ctx.fill();
     ctx.stroke();
   }
+  function drawChubbyPlane(p, x, y, sc) {
+    const green = p.kind === "green";
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(p.dir || 1, 1);
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.beginPath();
+    ctx.ellipse(6, 8, 28 * sc, 8 * sc, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = green ? "#2f9e45" : "#8a3ec4";
+    ctx.strokeStyle = "#140c10";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 28 * sc, 9 * sc, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-6 * sc, 0);
+    ctx.lineTo(8 * sc, -16 * sc);
+    ctx.lineTo(16 * sc, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-20 * sc, -2 * sc);
+    ctx.lineTo(-32 * sc, -12 * sc);
+    ctx.lineTo(-18 * sc, 2 * sc);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#d8f4ff";
+    ctx.beginPath();
+    ctx.ellipse(10 * sc, -1 * sc, 5 * sc, 3.5 * sc, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
   function drawDetailedPlane(p, x, y, sc) {
     const sheet = ensurePlane(p.kind);
     const dw = 118 * sc;
@@ -3125,7 +3424,7 @@ window.D21 = {
     const sc = Math.max(0.7, speedScale());
     const dw = 118 * sc;
     const dh = dw * 0.42;
-    drawDetailedPlane(p, x, y, sc);
+    drawChubbyPlane(p, x, y, sc);
     if (beatNow() < p.flashUntil) {
       ctx.save();
       ctx.globalAlpha = 0.4;
@@ -3211,13 +3510,13 @@ window.D21 = {
     ctx.save();
     ctx.translate(x, y);
     if (rot) ctx.rotate(rot);
-    ctx.filter = "brightness(0)";
+    setFilter("brightness(0)");
     const o = Math.max(2, dw * 0.06);
     ctx.drawImage(stamp, -dw / 2 + o, -dh / 2, dw, dh);
     ctx.drawImage(stamp, -dw / 2 - o, -dh / 2, dw, dh);
     ctx.drawImage(stamp, -dw / 2, -dh / 2 + o, dw, dh);
     ctx.drawImage(stamp, -dw / 2, -dh / 2 - o, dw, dh);
-    ctx.filter = "none";
+    setFilter("none");
     ctx.drawImage(stamp, -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
   }
@@ -3305,6 +3604,62 @@ window.D21 = {
     drawSplashRing(m);
     drawDepthCharge(m, mineY(m));
   }
+  function drawBomb(m, y) {
+    const sc = Math.max(0.72, speedScale());
+    const vx = m.vx || 0;
+    const vy = m.phase === "water" ? (m.vy || 28) : (m.vy || 40);
+    const ang = Math.atan2(vx, vy || 1);
+    ctx.save();
+    ctx.translate(m.x, y);
+    ctx.rotate(ang);
+    if (m.phase === "water") {
+      const blue = m.homeColor !== "red";
+      ctx.fillStyle = blue ? "#3c74d6" : "#e24b45";
+      ctx.strokeStyle = "#141414";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, 18 * sc);
+      ctx.lineTo(4.2 * sc, 4 * sc);
+      ctx.lineTo(3.2 * sc, -12 * sc);
+      ctx.lineTo(0, -18 * sc);
+      ctx.lineTo(-3.2 * sc, -12 * sc);
+      ctx.lineTo(-4.2 * sc, 4 * sc);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = blue ? "#9fd0ff" : "#ffd0c8";
+      ctx.fillRect(-1.2 * sc, -2 * sc, 2.4 * sc, 10 * sc);
+      ctx.restore();
+      return;
+    }
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.beginPath();
+    ctx.ellipse(2, 4, 5 * sc, 12 * sc, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = m.color === "purple" ? "#9a45d4" : "#3cbe4e";
+    ctx.strokeStyle = "#141414";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 16 * sc);
+    ctx.quadraticCurveTo(5.5 * sc, 4 * sc, 4 * sc, -8 * sc);
+    ctx.lineTo(0, -14 * sc);
+    ctx.lineTo(-4 * sc, -8 * sc);
+    ctx.quadraticCurveTo(-5.5 * sc, 4 * sc, 0, 16 * sc);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-4 * sc, -6 * sc);
+    ctx.lineTo(-9 * sc, -12 * sc);
+    ctx.lineTo(-2 * sc, -8 * sc);
+    ctx.moveTo(4 * sc, -6 * sc);
+    ctx.lineTo(9 * sc, -12 * sc);
+    ctx.lineTo(2 * sc, -8 * sc);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(-1, 2 * sc, 1.4, 8 * sc);
+    ctx.restore();
+  }
   function drawMissile(m) {
     const x = m.x;
     const y = missileY(m);
@@ -3325,7 +3680,7 @@ window.D21 = {
         ctx.restore();
       }
     }
-    drawDepthCharge(m, y);
+    drawBomb(m, y);
   }
   function drawLaser(t) {
     const y = torpY(t);
@@ -3457,6 +3812,118 @@ window.D21 = {
     ctx.fill();
     ctx.restore();
   }
+  const markSheets = new Map();
+  const MARKS = [
+    { id: "bernabeu", u: 0.08 },
+    { id: "cibeles", u: 0.18 },
+    { id: "congreso", u: 0.28 },
+    { id: "neptuno", u: 0.37 },
+    { id: "ventas", u: 0.48 }
+  ];
+  function paintMark(g, id) {
+    g.lineJoin = "round";
+    g.lineWidth = 4;
+    g.strokeStyle = "#161311";
+    if (id === "bernabeu") {
+      g.fillStyle = "#f4f7fb";
+      g.beginPath();
+      g.ellipse(140, 108, 92, 36, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#d5deea";
+      g.fillRect(62, 70, 156, 42);
+      g.strokeRect(62, 70, 156, 42);
+      g.fillStyle = "#2f6fe0";
+      g.fillRect(70, 78, 140, 10);
+    } else if (id === "cibeles") {
+      g.fillStyle = "#d7e4ea";
+      g.beginPath();
+      g.ellipse(140, 118, 70, 18, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#f7f4ee";
+      g.fillRect(118, 62, 44, 48);
+      g.strokeRect(118, 62, 44, 48);
+      g.beginPath();
+      g.moveTo(108, 78);
+      g.lineTo(172, 78);
+      g.lineTo(140, 48);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#c9a24a";
+      g.beginPath();
+      g.arc(140, 58, 8, 0, Math.PI * 2);
+      g.fill();
+    } else if (id === "congreso") {
+      g.fillStyle = "#f3efe4";
+      g.fillRect(78, 58, 124, 62);
+      g.strokeRect(78, 58, 124, 62);
+      g.fillStyle = "#e7e0d2";
+      for (let i = 0; i < 5; i++) {
+        g.fillRect(90 + i * 20, 70, 10, 34);
+        g.strokeRect(90 + i * 20, 70, 10, 34);
+      }
+      g.fillStyle = "#c4a574";
+      g.beginPath();
+      g.ellipse(70, 112, 16, 10, 0, 0, Math.PI * 2);
+      g.ellipse(210, 112, 16, 10, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+    } else if (id === "neptuno") {
+      g.fillStyle = "#d5e7ea";
+      g.beginPath();
+      g.ellipse(140, 120, 64, 16, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#e7f3f6";
+      g.fillRect(124, 58, 32, 52);
+      g.strokeRect(124, 58, 32, 52);
+      g.strokeStyle = "#1d4e6e";
+      g.beginPath();
+      g.moveTo(140, 40);
+      g.lineTo(140, 78);
+      g.moveTo(128, 52);
+      g.lineTo(152, 52);
+      g.stroke();
+    } else {
+      g.fillStyle = "#a34732";
+      g.beginPath();
+      g.ellipse(140, 100, 78, 34, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#c45a3e";
+      g.beginPath();
+      g.ellipse(140, 92, 62, 22, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#f3e2c4";
+      for (let i = 0; i < 7; i++) {
+        g.fillRect(86 + i * 16, 96, 8, 14);
+      }
+    }
+  }
+  function markSheet(id) {
+    if (markSheets.has(id)) return markSheets.get(id);
+    const c = document.createElement("canvas");
+    c.width = 280;
+    c.height = 160;
+    paintMark(c.getContext("2d"), id);
+    markSheets.set(id, c);
+    return c;
+  }
+  function drawLandmarks(wy, geom) {
+    const g = geom || skyGeom(wy);
+    if (!g) return;
+    for (const mark of MARKS) {
+      const sheet = markSheet(mark.id);
+      const dw = Math.max(64, g.dw * 0.055);
+      const dh = dw * sheet.height / sheet.width;
+      const x = g.x + mark.u * g.dw;
+      if (x < -dw || x > w + dw) continue;
+      ctx.drawImage(sheet, x - dw / 2, wy - dh + 8, dw, dh);
+    }
+  }
   function skyGeom(wy) {
     const img = SPRITES.sky;
     if (!spriteReady(img)) return null;
@@ -3488,7 +3955,7 @@ window.D21 = {
   let skyMask = null;
   function ensureSkyMask() {
     const img = SPRITES.sky;
-    if (skyMask || !spriteReady(img)) return;
+    if (isWebKit() || skyMask || !spriteReady(img)) return;
     const c = document.createElement("canvas");
     c.width = img.naturalWidth;
     c.height = img.naturalHeight;
@@ -3523,18 +3990,19 @@ window.D21 = {
     drawDaySky();
     const img = SPRITES.bg;
     if (spriteReady(img)) {
+      ensureSeaTint();
+      const seaImg = seaTint || img;
       const f = BG_WATER;
-      const sc = Math.max(w / img.naturalWidth, (h - wy + 40) / ((1 - f) * img.naturalHeight));
-      const dw = img.naturalWidth * sc;
-      const dh = img.naturalHeight * sc;
+      const sc = Math.max(w / seaImg.width, (h - wy + 40) / ((1 - f) * seaImg.height));
+      const dw = seaImg.width * sc;
+      const dh = seaImg.height * sc;
       const top = wy - f * dh;
       const shift = (scrollPx() * 0.22) % dw;
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, wy - 1, w, h - wy + 2);
       ctx.clip();
-      ctx.filter = "saturate(0.85) brightness(0.94)";
-      for (let i = -1; i < w / dw + 2; i++) ctx.drawImage(img, -shift + i * dw, top, dw, dh);
+      for (let i = -1; i < w / dw + 2; i++) ctx.drawImage(seaImg, -shift + i * dw, top, dw, dh);
       ctx.restore();
     } else {
       const sea = ctx.createLinearGradient(0, wy, 0, h);
@@ -3563,7 +4031,22 @@ window.D21 = {
       drawSkyFront(wy);
     }
     ctx.restore();
+    drawLandmarks(wy);
     return true;
+  }
+  let seaTint = null;
+  function ensureSeaTint() {
+    const img = SPRITES.bg;
+    if (seaTint || !spriteReady(img)) return;
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = "multiply";
+    g.fillStyle = "rgba(190, 205, 214, 0.45)";
+    g.fillRect(0, 0, c.width, c.height);
+    seaTint = c;
   }
   const BOARD_BLUE = "#0c4f8a";
   const BOARD_INK = "#d7eeff";
@@ -3689,9 +4172,11 @@ window.D21 = {
     const x = Math.round((w - bw) / 2);
     const y = Math.round(Math.max(128, wy * 0.34));
     ctx.save();
-    ctx.shadowColor = "rgba(10,11,13,0.28)";
-    ctx.shadowBlur = 12;
-    ctx.shadowOffsetY = 4;
+    if (!lowFx && !(window.matchMedia && window.matchMedia("(pointer: coarse)").matches)) {
+      ctx.shadowColor = "rgba(10,11,13,0.28)";
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 3;
+    }
     roundRect(x, y, bw, bh, 8);
     ctx.fillStyle = BANNER_YELLOW;
     ctx.fill();
@@ -4122,6 +4607,25 @@ window.D21 = {
       ctx.restore();
     }
   }
+  function drawLemaPill(word, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    const label = String(word || "");
+    ctx.font = `700 13px ${FONT}`;
+    const tw = Math.max(78, ctx.measureText(label).width + 22);
+    const th = 28;
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    roundRect(-tw / 2 + 3, -th / 2 + 4, tw, th, th / 2);
+    ctx.fill();
+    ctx.fillStyle = "#C6FF3A";
+    roundRect(-tw / 2, -th / 2, tw, th, th / 2);
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#141414";
+    ctx.stroke();
+    text(label, 0, 1, 13, "#141414");
+    ctx.restore();
+  }
   function drawPremioBanner(str, x, y) {
     const words = String(str).split(" ");
     const mid = Math.ceil(words.length / 2);
@@ -4158,7 +4662,7 @@ window.D21 = {
     for (const m of missiles) drawMissile(m);
     for (const p of premios) {
       const py = p.y0 + (beatNow() - p.t0) * p.v;
-      drawPremioBanner(p.text, p.x, py);
+      drawLemaPill(p.word || p.text || "", p.x, py);
     }
     drawBeams();
     for (const t of tubes) drawTube(t);
@@ -4323,8 +4827,9 @@ window.D21 = {
     const hudAlign = inMatch() ? "center" : "left";
     text(fmt(score), hudX, inMatch() ? 58 : 24, inMatch() ? 22 * sc : 26 * sc, INK, "#041018", 4, hudAlign);
     text(recName + fmt(recVal), hudX, inMatch() ? 78 : 46, 13 * sc, INK, "#041018", 3, hudAlign);
-    const lifeStart = inMatch() ? w / 2 - 32 : hudX + 6;
-    for (let i = 0; i < 3; i++) drawLife(lifeStart + i * 32, inMatch() ? 98 : 70, i < lives);
+    const hearts = Math.max(3, Math.min(5, lives));
+    const lifeStart = inMatch() ? w / 2 - ((hearts - 1) * 32) / 2 : hudX + 6;
+    for (let i = 0; i < hearts; i++) drawLife(lifeStart + i * 32, inMatch() ? 98 : 70, i < lives);
     if (mode === "play" || mode === "dying" || mode === "pause") {
       const narrow = w < 760;
       text("Oleada " + oleadaNow(), w / 2, 18, narrow ? 13 : 15, "#ffffff", "#141414", 3, "center");
@@ -4357,7 +4862,7 @@ window.D21 = {
       if (age < 1600) {
         const a = age < 900 ? 1 : clamp(1 - (age - 900) / 700, 0, 1);
         ctx.globalAlpha = a * 0.92;
-        const hint = "Flechas o WASD, o las de las esquinas. El láser y los torpedos rompen las cargas de profundidad.";
+        const hint = "Flechas o WASD. En el móvil, arrastra el dedo y el submarino va hacia él.";
         const lines = wrapLines(hint, Math.min(w - 36, 520), 13);
         const hintY = h - 18 - (lines.length - 1) * 15;
         lines.forEach((ln, i) => text(ln, w / 2, hintY + i * 15, 13, INK, "#041018", 3));
@@ -4771,16 +5276,24 @@ window.D21 = {
       text("Créditos", center, y + 8, 13, INK);
       hitButton("credits", center - cw / 2, y - 6, cw, 28);
       y += 28;
-      const help = "Flechas o WASD mueven el submarino. En el móvil, las flechas de las esquinas también. El láser y los torpedos rompen las cargas de profundidad. El misil amarillo persigue al blanco más cercano y no se lanza otro hasta que impacta.";
+      const help = "Flechas o WASD. En el móvil, arrastra: el submarino sigue el dedo. El disparo azul sube solo y no sale otro hasta que impacta o sale de la pantalla. En el iPhone, Añadir a pantalla de inicio lo pone a pantalla completa.";
       wrapLines(help, Math.min(box.panelW, w - 24), 12).forEach((ln) => {
         text(ln, center, y, 12, "#d5dbe3");
         y += 16;
       });
+      if (showIosHint) {
+        text("iPhone: Añadir a pantalla de inicio para jugar a pantalla completa.", center, y + 4, 12, "#05C3DE");
+      }
     } else {
       text("Fin de la partida", center, y, 22 * k, INK);
       y += 22;
       text(fmt(score), center, y + 8, 36 * k, YELLOW);
-      y += 36;
+      y += 40;
+      text("Modo: " + modeLabel() + (mixed ? " · mixta" : ""), center, y, 15, INK);
+      y += 18;
+      const heard = topTrack();
+      text("Más escuchada: " + (heard ? heard.title : "—"), center, y, 14, "#d5dbe3");
+      y += 18;
       text((mixed ? "Mixta " : "Récord ") + fmt(mixed ? recordMixta : record), center, y, 14, INK);
       y += 18;
       text("Problemas resueltos: " + problemas, center, y, 14, INK);
@@ -4866,7 +5379,7 @@ window.D21 = {
   function draw() {
     hits.length = 0;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.filter = "none";
+    setFilter("none");
     ctx.shadowBlur = 0;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
@@ -4901,7 +5414,16 @@ window.D21 = {
     if (mode === "pause") drawPause();
     drawSpeaker(mutePos().x, mutePos().y, mutePos().r);
     drawSideControls();
-    drawPads();
+    if (player.shield > 0 && player.alive) {
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.strokeStyle = "rgba(5,195,222,0.9)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 36 * subScale(), 22 * subScale(), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (mode === "intro" || mode === "play" || mode === "pause") drawPauseIcon(pausePos().x, pausePos().y, pausePos().r);
   }
 
@@ -4930,51 +5452,76 @@ window.D21 = {
     const turn = vh > vw;
     root.classList.toggle("turned", turn);
   }
+  function fullscreenOn() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
   function lockLandscape() {
     const root = document.documentElement;
     const lock = () => {
       try {
-        if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {});
+        if (screen.orientation && screen.orientation.lock) {
+          const pending = screen.orientation.lock("landscape");
+          if (pending && pending.catch) pending.catch(() => {});
+        }
       } catch (e) {}
     };
     try {
-      if (!document.fullscreenElement && root.requestFullscreen) {
-        const pending = root.requestFullscreen();
-        if (pending && pending.then) pending.then(lock).catch(lock);
-        else lock();
-      } else lock();
+      if (!fullscreenOn()) {
+        const req = root.requestFullscreen || root.webkitRequestFullscreen || root.webkitRequestFullScreen;
+        if (req) {
+          let pending = null;
+          try { pending = req.call(root, { navigationUI: "hide" }); }
+          catch (e) { try { pending = req.call(root); } catch (e2) {} }
+          if (pending && pending.then) pending.then(lock).catch(lock);
+          else lock();
+          return;
+        }
+      }
+      lock();
     } catch (e) { lock(); }
   }
   function resize() {
     applyTurn();
     const stage = document.getElementById("stage") || canvas;
     const box = stage.getBoundingClientRect();
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    w = Math.max(1, Math.round(stage.clientWidth || box.width || window.innerWidth));
-    h = Math.max(1, Math.round(stage.clientHeight || box.height || window.innerHeight));
+    const vv = window.visualViewport;
+    const turned = document.documentElement.classList.contains("turned");
+    w = Math.max(1, Math.round(turned ? (stage.clientWidth || box.width || window.innerHeight) : ((vv && vv.width) || stage.clientWidth || window.innerWidth)));
+    h = Math.max(1, Math.round(turned ? (stage.clientHeight || box.height || window.innerWidth) : ((vv && vv.height) || stage.clientHeight || window.innerHeight)));
+    const coarse = window.matchMedia("(pointer: coarse)").matches || Math.min(w, h) < 540;
+    let d = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2);
+    const maxPx = coarse ? 900 * 500 : 1600 * 900;
+    if (w * h * d * d > maxPx) d = Math.max(1, Math.sqrt(maxPx / (w * h)));
+    dpr = d;
     canvas.style.width = w + "px";
     canvas.style.height = h + "px";
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
+    canvas.width = Math.max(1, Math.round(w * dpr));
+    canvas.height = Math.max(1, Math.round(h * dpr));
     if (lastW && (lastW !== w || lastH !== h)) scaleWorld(w / lastW, h / lastH);
     lastW = w;
     lastH = h;
   }
+  let frameSamples = [];
+  let lowFx = false;
   function frame(ts) {
-    let dt = 0;
-    const running = audio && musicEpoch != null && audio.state === "running";
-    if (running) {
-      const t = audio.currentTime;
-      const raw = t - lastAudioT;
-      if (raw > 0.3 && mode === "play") player.invUntil = Math.max(player.invUntil, beatNow() + 1);
-      dt = Math.min(0.05, Math.max(0, raw));
-      lastAudioT = t;
-    } else if (mode === "title" || mode === "over") {
-      dt = Math.min(0.05, Math.max(0, (ts - lastTs) / 1000));
-    }
+    const wall = Math.min(0.1, Math.max(0, lastTs ? (ts - lastTs) / 1000 : 0.016));
     lastTs = ts;
-    update(dt);
+    if (audio && audio.state === "running") {
+      const raw = audio.currentTime - lastAudioT;
+      if (raw > 0.3 && mode === "play") player.invUntil = Math.max(player.invUntil, beatNow() + 1);
+      lastAudioT = audio.currentTime;
+    }
+    const t0 = performance.now();
+    update(wall);
     draw();
+    const ms = performance.now() - t0;
+    frameSamples.push(ms);
+    if (frameSamples.length > 40) frameSamples.shift();
+    if (frameSamples.length > 12) {
+      const avg = frameSamples.reduce((a, b) => a + b, 0) / frameSamples.length;
+      if (avg > 20) lowFx = true;
+      else if (avg < 13) lowFx = false;
+    }
     requestAnimationFrame(frame);
   }
 
@@ -5014,7 +5561,16 @@ window.D21 = {
   canvas.addEventListener("pointerdown", onDown, { passive: false });
   canvas.addEventListener("pointerup", startFromEvent);
   canvas.addEventListener("click", startFromEvent);
-  canvas.addEventListener("touchend", startFromEvent, { passive: true });
+  canvas.addEventListener("touchend", startFromEvent, { passive: false });
+  window.addEventListener("touchstart", unlockAudio, { capture: true, passive: true });
+  window.addEventListener("touchend", unlockAudio, { capture: true, passive: true });
+  window.addEventListener("click", unlockAudio, true);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && audio && (audio.state === "suspended" || audio.state === "interrupted")) unlockAudio();
+  });
+  const blockScroll = (e) => { if (e.cancelable) e.preventDefault(); };
+  document.addEventListener("touchmove", blockScroll, { passive: false });
+  document.addEventListener("gesturestart", blockScroll, { passive: false });
   window.addEventListener("pointermove", onMove, { passive: false });
   window.addEventListener("pointerup", onUp);
   window.addEventListener("pointercancel", onUp);
@@ -5023,6 +5579,40 @@ window.D21 = {
   loadSprites();
 
   window.__D21 = {
+    skyStrip() {
+      const img = SPRITES.sky;
+      if (!spriteReady(img)) return "";
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const g = c.getContext("2d");
+      g.drawImage(img, 0, 0);
+      const fake = { x: 0, dw: c.width, dh: c.height };
+      const prev = ctx;
+      return (function () {
+        const old = ctx;
+        // draw into the strip using the same painters via a temporary context swap is unsafe.
+        MARKS.forEach((mark) => {
+          const sheet = markSheet(mark.id);
+          const dw = c.width * 0.055;
+          const dh = dw * sheet.height / sheet.width;
+          const x = mark.u * c.width;
+          g.drawImage(sheet, x - dw / 2, c.height - dh - 8, dw, dh);
+        });
+        return c.toDataURL("image/jpeg", 0.72);
+      })();
+    },
+    probeAudio() {
+      const rock = TRACKS.find((t) => t.id === "rock-umplix");
+      const flac = TRACKS.find((t) => t.id === "technomania101");
+      return {
+        state: audio ? audio.state : "none",
+        webkit: isWebKit(),
+        rock: rock ? musicCandidates(rock) : [],
+        flac: flac ? musicCandidates(flac) : [],
+        session: navigator.audioSession && navigator.audioSession.type || ""
+      };
+    },
     snapshot() {
       return {
         mode, score, lives, shots, music: musicState, offset: beatOffset,
@@ -5039,6 +5629,8 @@ window.D21 = {
         mineHard: mines.length ? !!mines[0].hard : false,
         playerX: player.x, playerY: player.y, w, h, speedMode, bpm: currentBpm, muted,
         musicOn, trackId: currentTrack() ? currentTrack().id : "",
+        audioState: audio ? audio.state : "none",
+        musicFile: (currentTrack() && (currentTrack().fileUsed || (musicCandidates(currentTrack())[0] || ""))),
         musicVol: musicGain ? musicGain.gain.value : null,
         subTop: Math.round(subLimits().top),
         oleada: oleadaNow(),
@@ -5060,14 +5652,47 @@ window.D21 = {
     demoAir() {
       if (mode !== "play") return false;
       yellowFade = 0;
-      trySpawnPlane("green");
-      const p = planes[planes.length - 1];
-      if (p) { p.x0 = w * 0.62; p.t0 = beatNow(); p.speed = 0; p.problem = null; }
-      trySpawnPlane("purple");
-      const q = planes[planes.length - 1];
-      if (q && q !== p) { q.x0 = w * 0.34; q.t0 = beatNow(); q.speed = 0; q.problem = null; }
-      spawnMissileAt(w * 0.48, null, waterY() * 0.42, "green", p);
+      holdSpawns = true;
+      planes.length = 0;
+      const make = (kind, x) => {
+        const dir = kind === "green" ? 1 : -1;
+        planes.push({
+          kind, dir, hp: 3, maxHp: 3, x0: x, t0: beatNow(), speed: 0,
+          problem: null, flashUntil: 0
+        });
+      };
+      make("purple", w * 0.34);
+      make("green", w * 0.66);
+      spawnMissileAt(w * 0.5, null, waterY() * 0.4, "green", planes[1], { vx: 20, vy: 40, spinV: 0 });
       return planes.length;
+    },
+    demoPrize() {
+      if (mode !== "play") return false;
+      yellowFade = 0;
+      dropLema(w * 0.5, player.y - 30);
+      const p = premios[premios.length - 1];
+      if (p) { p.v = 0; p.y0 = player.y - 36; }
+      const label = grantExtra();
+      banner = { text: (p ? p.word : "PODER") + " · " + label, until: beatNow() + 6 };
+      return banner.text;
+    },
+    demoHome() {
+      if (mode !== "play") return false;
+      yellowFade = 0;
+      planes.length = 0;
+      missiles.length = 0;
+      spawnMissileAt(w * 0.42, null, waterY() + 80, "purple", null, { vx: 10, vy: 20, spinV: 0 });
+      const m = missiles[missiles.length - 1];
+      m.bomb = true;
+      m.fromPlane = true;
+      m.phase = "water";
+      m.y = waterY() + 70;
+      m.waterAt = beatNow();
+      m.heading = Math.atan2(player.x - m.x, player.y - m.y);
+      m.homeColor = "red";
+      m.vx = Math.sin(m.heading) * 140;
+      m.vy = Math.cos(m.heading) * 140;
+      return m.homeColor;
     },
     demoFleet() {
       if (mode !== "play") return false;
@@ -5148,6 +5773,15 @@ window.D21 = {
     }
   };
 
+  let showIosHint = false;
+  try {
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || "");
+    const standalone = navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+    if (ios && !standalone && !localStorage.getItem("d21-ios-hint")) {
+      showIosHint = true;
+      localStorage.setItem("d21-ios-hint", "1");
+    }
+  } catch (e) {}
   resize();
   if (document.fonts && document.fonts.load) {
     document.fonts.load('700 32px "D21"').catch(() => {});
