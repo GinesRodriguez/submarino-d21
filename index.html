@@ -1561,47 +1561,82 @@ window.D21 = {
     cands.sort((a, b) => Math.abs(a.ang) - Math.abs(b.ang) || a.dist - b.dist);
     return cands[0];
   }
-  function fireBolt(ang) {
-    const speed = 560;
+  function pickGunTarget() {
+    const px = player.x;
+    const py = player.y;
+    const near = 280;
+    let threat = null;
+    function nearer(x, y, kind, ref, limit) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      const d = Math.hypot(x - px, y - py);
+      if (limit && d > limit) return;
+      if (!threat || d < threat.d) threat = { x, y, kind, ref, d };
+    }
+    for (const m of missiles) if (!m.dying) nearer(m.x, missileY(m), "bomb", m, near);
+    for (const m of mines) if (!m.dying) nearer(m.x, mineY(m), "mine", m, near);
+    if (threat) return threat;
+    for (const p of planes) nearer(planeX(p), planeY(p), "plane", p, 0);
+    for (const s of ships) if (!s.dead) nearer(shipX(s), waterY() - 10, "ship", s, 0);
+    return threat;
+  }
+  function fireBoltAt(target) {
+    const speed = 920;
+    const originY = player.y - 8 * subScale();
+    let ang = -Math.PI / 2;
+    if (target) ang = Math.atan2(target.y - originY, target.x - player.x);
     bolts.push({
       x: player.x,
-      y: player.y - 14 * subScale(),
-      vx: Math.sin(ang) * speed,
-      vy: -Math.cos(ang) * speed
+      y: originY,
+      vx: Math.cos(ang) * speed,
+      vy: Math.sin(ang) * speed,
+      kind: target ? target.kind : "",
+      ref: target ? target.ref : null
     });
+    if (bolts.length > 14) bolts.splice(0, bolts.length - 14);
     sfxShot();
   }
   function updateBolts(dt) {
-    const step = dt / Math.max(0.05, BEAT);
+    const step = Math.max(0, Math.min(0.05, dt || 0));
     for (let i = bolts.length - 1; i >= 0; i--) {
       const b = bolts[i];
       b.x += b.vx * step;
       b.y += b.vy * step;
       let used = false;
-      for (let j = missiles.length - 1; j >= 0; j--) {
+      for (let j = missiles.length - 1; j >= 0 && !used; j--) {
         const m = missiles[j];
         if (m.dying) continue;
         const my = missileY(m);
-        if (dist2(b.x, b.y, m.x, my) < 26 * 26) {
-          flashHazard(m, my);
-          used = true;
-          break;
-        }
+        if (dist2(b.x, b.y, m.x, my) < 28 * 28) { flashHazard(m, my); used = true; }
+      }
+      for (let j = mines.length - 1; j >= 0 && !used; j--) {
+        const m = mines[j];
+        if (m.dying) continue;
+        const my = mineY(m);
+        if (dist2(b.x, b.y, m.x, my) < 28 * 28) { flashHazard(m, my); used = true; }
       }
       if (!used) {
         for (let j = planes.length - 1; j >= 0; j--) {
           const p = planes[j];
           const px = planeX(p);
           const py = planeY(p);
-          const reach = 30 * Math.max(0.75, speedScale());
-          if (dist2(b.x, b.y, px, py) < reach * reach) {
-            hitPlane(p);
+          const reach = 36 * Math.max(0.75, speedScale());
+          if (dist2(b.x, b.y, px, py) < reach * reach) { hitPlane(p); used = true; break; }
+        }
+      }
+      if (!used) {
+        for (const s of ships) {
+          if (s.dead) continue;
+          if (circleRect(b.x, b.y, 10, keelRect(s))) {
+            s.hp -= 1;
+            s.flashUntil = beatNow() + 0.35;
+            if (s.hp <= 0) killShip(s);
+            else sfxPop();
             used = true;
             break;
           }
         }
       }
-      if (used || b.y < -30 || b.x < -40 || b.x > w + 40) bolts.splice(i, 1);
+      if (used || b.y < -40 || b.y > h + 40 || b.x < -40 || b.x > w + 40) bolts.splice(i, 1);
     }
   }
   function splashAt(x, y) {
@@ -1701,12 +1736,19 @@ window.D21 = {
   function autoWeapons() {
     if (mode !== "play" || !player.alive) return;
     const b = beatNow();
+    const rapid = b < player.rapidUntil;
+    const gunStep = rapid ? 0.5 : 1;
+    const gunIdx = Math.floor(b / gunStep + 0.05);
+    if (gunIdx !== shotGate && b <= gunIdx * gunStep + 0.2) {
+      shotGate = gunIdx;
+      const cap = rapid ? 12 : 6;
+      if (bolts.length < cap) fireBoltAt(pickGunTarget());
+    }
     const idx = Math.floor(b + 0.05);
-    if (idx <= shotGate || b > idx + 0.2) return;
-    const cap = b < player.rapidUntil ? 2 : 1;
-    if (tubes.length >= cap) return;
-    shotGate = idx;
-    shots += 1;
+    if (idx === lastTorpBeat || b > idx + 0.2) return;
+    const torpCap = rapid ? 2 : 1;
+    if (tubes.length >= torpCap) return;
+    lastTorpBeat = idx;
     tubes.push({
       x: player.x,
       y0: player.y - 10 * subScale(),
@@ -1784,11 +1826,11 @@ window.D21 = {
       const m = Math.hypot(x, y);
       return { x: x / m, y: y / m };
     }
-    if (drag) {
+    if (drag && Number.isFinite(drag.x) && Number.isFinite(drag.y)) {
       const dx = drag.x - player.x;
       const dy = drag.y - player.y;
       const m = Math.hypot(dx, dy);
-      if (m < 8) return { x: 0, y: 0 };
+      if (!Number.isFinite(m) || m < 8) return { x: 0, y: 0 };
       const k = Math.min(1, m / 90);
       return { x: (dx / m) * k, y: (dy / m) * k };
     }
@@ -1833,8 +1875,12 @@ window.D21 = {
     const sp = 420 * speedScale();
     const band = subLimits();
     const inset = 18;
-    player.x = clamp(player.x + v.x * sp * dt, inset, w - inset);
-    player.y = clamp(player.y + v.y * sp * dt, band.top, band.bot);
+    if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) {
+      player.x = w * 0.5;
+      player.y = (band.top + band.bot) * 0.5;
+    }
+    player.x = clamp(player.x + (Number.isFinite(v.x) ? v.x : 0) * sp * dt, inset, w - inset);
+    player.y = clamp(player.y + (Number.isFinite(v.y) ? v.y : 0) * sp * dt, band.top, band.bot);
     if (v.x > 0.25) player.facing = 1;
     if (v.x < -0.25) player.facing = -1;
     autoWeapons();
@@ -2336,25 +2382,42 @@ window.D21 = {
   }
   function posOf(e) {
     const t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+    if (!t || !Number.isFinite(t.clientX) && !(Number.isFinite(t.offsetX) && t.target === canvas)) return null;
     const turned = document.documentElement.classList.contains("turned");
     const r = canvas.getBoundingClientRect();
+    let x;
+    let y;
     if (!turned) {
       if (t.target === canvas && Number.isFinite(t.offsetX) && Number.isFinite(t.offsetY)) {
         const sx = canvas.clientWidth || w;
         const sy = canvas.clientHeight || h;
-        return { x: t.offsetX * (w / sx), y: t.offsetY * (h / sy) };
+        x = t.offsetX * (w / sx);
+        y = t.offsetY * (h / sy);
+      } else {
+        x = ((t.clientX - r.left) / (r.width || w)) * w;
+        y = ((t.clientY - r.top) / (r.height || h)) * h;
       }
-      return {
-        x: ((t.clientX - r.left) / (r.width || w)) * w,
-        y: ((t.clientY - r.top) / (r.height || h)) * h
-      };
+    } else {
+      const vx = t.clientX - r.left;
+      const vy = t.clientY - r.top;
+      x = (vy / (r.height || 1)) * w;
+      y = ((r.width - vx) / (r.width || 1)) * h;
     }
-    const vx = t.clientX - r.left;
-    const vy = t.clientY - r.top;
-    return {
-      x: (vy / (r.height || 1)) * w,
-      y: ((r.width - vx) / (r.width || 1)) * h
-    };
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
+  }
+  function releasePointer(id) {
+    fingers.delete(id);
+    if (moveId !== id) return;
+    moveId = null;
+    drag = null;
+    for (const [fid, finger] of fingers) {
+      if (!finger.ui && Number.isFinite(finger.x) && Number.isFinite(finger.y)) {
+        moveId = fid;
+        drag = { id: fid, x: finger.x, y: finger.y };
+        break;
+      }
+    }
   }
   function uiControl(p) {
     if (pointIn(p, mutePos(), 8)) return "mute";
@@ -2382,20 +2445,20 @@ window.D21 = {
   function onDown(e) {
     if (e.cancelable) e.preventDefault();
     const p = posOf(e);
+    if (!p) return;
+    if (moveId != null && !fingers.has(moveId)) releasePointer(moveId);
     const ui = uiControl(p);
     if (ui && useControl(ui)) {
       fingers.set(e.pointerId, { ui: true });
       return;
     }
     if (inMatch() && !fullscreenOn()) { try { lockLandscape(); } catch (err) {} }
-    if (mode === "intro") { skipIntro(); return; }
+    if (mode === "intro") skipIntro();
     if (mode !== "play") return;
     touchSeen = true;
     fingers.set(e.pointerId, { ui: false, x: p.x, y: p.y });
-    if (moveId == null) {
-      moveId = e.pointerId;
-      drag = { id: e.pointerId, x: p.x, y: p.y };
-    }
+    moveId = e.pointerId;
+    drag = { id: e.pointerId, x: p.x, y: p.y };
   }
   function aimJoy(p) {
     if (!joy) return;
@@ -2412,23 +2475,17 @@ window.D21 = {
     const held = fingers.get(e.pointerId);
     if (!held || held.ui) return;
     const p = posOf(e);
+    if (!p) return;
     held.x = p.x;
     held.y = p.y;
     if (moveId === e.pointerId) drag = { id: e.pointerId, x: p.x, y: p.y };
   }
   function onUp(e) {
-    fingers.delete(e.pointerId);
-    if (moveId === e.pointerId) {
-      moveId = null;
-      drag = null;
-      for (const [id, finger] of fingers) {
-        if (!finger.ui) {
-          moveId = id;
-          drag = { id, x: finger.x, y: finger.y };
-          break;
-        }
-      }
-    }
+    releasePointer(e.pointerId);
+  }
+  function onTouchDone(e) {
+    const touches = e.changedTouches || [];
+    for (let i = 0; i < touches.length; i++) releasePointer(touches[i].identifier);
   }
 
   function roundRect(x, y, bw, bh, r) {
@@ -3422,6 +3479,136 @@ window.D21 = {
     ctx.fill();
     ctx.stroke();
   }
+  const chunkySheets = new Map();
+  function paintChunky(g, green) {
+    const body = green ? "#3cbe4e" : "#9a45d4";
+    const deep = green ? "#176b2e" : "#541a78";
+    const lite = green ? "#b6f0a4" : "#f0c8ff";
+    const ink = "#141414";
+    g.lineJoin = "round";
+    g.lineCap = "round";
+    g.strokeStyle = ink;
+    g.lineWidth = 7;
+    g.fillStyle = "rgba(0,0,0,0.18)";
+    g.beginPath();
+    g.ellipse(8, 48, 120, 16, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = deep;
+    g.beginPath();
+    g.moveTo(-150, 8);
+    g.lineTo(-230, -70);
+    g.quadraticCurveTo(-190, -20, -150, 4);
+    g.closePath();
+    g.fill();
+    g.stroke();
+    g.beginPath();
+    g.moveTo(10, 28);
+    g.lineTo(150, 36);
+    g.lineTo(120, 92);
+    g.quadraticCurveTo(40, 78, -20, 62);
+    g.closePath();
+    g.fill();
+    g.stroke();
+    const fuse = g.createLinearGradient(0, -50, 0, 50);
+    fuse.addColorStop(0, lite);
+    fuse.addColorStop(0.45, body);
+    fuse.addColorStop(1, deep);
+    g.fillStyle = fuse;
+    g.beginPath();
+    g.moveTo(200, 4);
+    g.quadraticCurveTo(170, -48, 70, -42);
+    g.quadraticCurveTo(-40, -36, -150, -8);
+    g.quadraticCurveTo(-190, 6, -150, 28);
+    g.quadraticCurveTo(-20, 52, 80, 46);
+    g.quadraticCurveTo(180, 40, 200, 4);
+    g.closePath();
+    g.fill();
+    g.stroke();
+    g.fillStyle = "#1b1e22";
+    g.beginPath();
+    g.arc(196, 4, 22, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.fillStyle = "#3a4148";
+    g.beginPath();
+    g.arc(196, 4, 8, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = "rgba(20,20,20,0.55)";
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(-120, 0);
+    g.lineTo(150, 2);
+    g.moveTo(-10, -24);
+    g.lineTo(-10, 30);
+    g.moveTo(70, -30);
+    g.lineTo(70, 34);
+    g.stroke();
+    g.fillStyle = ink;
+    for (let i = 0; i < 8; i++) {
+      g.beginPath();
+      g.arc(-90 + i * 28, -6, 2.1, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = "#2a2e32";
+    g.strokeStyle = ink;
+    g.lineWidth = 3;
+    for (let i = 0; i < 3; i++) {
+      g.beginPath();
+      g.ellipse(-20 + i * 18, 12, 6, 4, 0, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+    }
+    const glass = g.createLinearGradient(40, -70, 110, 0);
+    glass.addColorStop(0, "rgba(248,252,255,0.98)");
+    glass.addColorStop(0.5, "#9fd8f0");
+    glass.addColorStop(1, "#2a6d88");
+    g.fillStyle = glass;
+    g.lineWidth = 5;
+    g.beginPath();
+    g.ellipse(78, -28, 40, 22, -0.2, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.strokeStyle = "rgba(255,255,255,0.85)";
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(52, -38);
+    g.quadraticCurveTo(74, -46, 100, -30);
+    g.stroke();
+  }
+  function chunkySheet(kind) {
+    if (chunkySheets.has(kind)) return chunkySheets.get(kind);
+    const c = document.createElement("canvas");
+    c.width = 720;
+    c.height = 360;
+    const g = c.getContext("2d");
+    g.translate(340, 170);
+    paintChunky(g, kind === "green");
+    chunkySheets.set(kind, c);
+    return c;
+  }
+  function drawChunkyPlane(p, x, y, sc) {
+    const sheet = chunkySheet(p.kind);
+    const dw = 188 * sc;
+    const dh = dw * (360 / 720);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale((p.dir || 1), 1);
+    ctx.drawImage(sheet, -dw * 0.47, -dh * 0.48, dw, dh);
+    const spin = (performance.now() / 26) % (Math.PI * 2);
+    ctx.save();
+    ctx.translate(dw * 0.34, dh * 0.02);
+    ctx.rotate(spin);
+    ctx.strokeStyle = "rgba(244,247,252,0.92)";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(-18, 0);
+    ctx.lineTo(18, 0);
+    ctx.moveTo(0, -15);
+    ctx.lineTo(0, 15);
+    ctx.stroke();
+    ctx.restore();
+    ctx.restore();
+  }
   function drawChubbyPlane(p, x, y, sc) {
     const green = p.kind === "green";
     ctx.save();
@@ -3478,7 +3665,7 @@ window.D21 = {
     const sc = Math.max(0.7, speedScale());
     const dw = 118 * sc;
     const dh = dw * 0.42;
-    drawChubbyPlane(p, x, y, sc);
+    drawChunkyPlane(p, x, y, Math.max(0.9, sc));
     if (beatNow() < p.flashUntil) {
       ctx.save();
       ctx.globalAlpha = 0.4;
@@ -5308,7 +5495,7 @@ window.D21 = {
     const listW = lay.collapsed ? Math.min(220, Math.round(w * 0.36)) : lay.trackW;
     const listX = w - lay.margin - listW;
     const room = lay.collapsed ? h - lay.rightTop - 8 : lay.rightRoom;
-    const rowH = Math.max(22, Math.min(lay.collapsed ? 34 : 40, (room - lay.gap * (TRACKS.length - 1)) / TRACKS.length));
+    const rowH = Math.max(lay.collapsed ? 36 : 28, Math.min(lay.collapsed ? 48 : 44, (room - lay.gap * (TRACKS.length - 1)) / TRACKS.length));
     const limit = lay.collapsed ? h - 4 : waterY() - 2;
     TRACKS.forEach((track, i) => {
       const y = lay.rightTop + i * (rowH + lay.gap);
@@ -5334,9 +5521,9 @@ window.D21 = {
       ctx.lineWidth = on ? 2 : 1;
       ctx.strokeStyle = on ? YELLOW : "rgba(244,247,251,0.75)";
       ctx.stroke();
-      const title = fitLabel(track.button || track.title, listW - 10, 11);
-      text(title.text, listX + listW / 2, y + rowH * 0.38, title.size, on ? YELLOW : INK);
-      const author = fitLabel(track.author, listW - 10, 8);
+      const title = fitLabel(track.button || track.title, listW - 12, Math.max(13, rowH * 0.32));
+      text(title.text, listX + listW / 2, y + rowH * 0.36, title.size, on ? YELLOW : INK);
+      const author = fitLabel(track.author, listW - 12, Math.max(11, title.size - 2));
       text(author.text, listX + listW / 2, y + rowH * 0.74, author.size, "#d5dbe3");
       hitButton("track-" + track.id, listX, y, listW, rowH);
     });
@@ -5364,13 +5551,13 @@ window.D21 = {
     const foot = 36;
     const wide = w > h + 40;
     if (wide) {
-      const side = Math.max(120, Math.min(h - topBar - foot - 8, w * 0.46));
+      const side = Math.max(140, Math.min(h - 28, w * 0.38));
       return {
-        x: 16,
-        y: topBar + (h - topBar - foot - side) / 2,
+        x: 18,
+        y: Math.max(12, (h - side) / 2),
         s: side,
-        panelX: 16 + side + 12,
-        panelW: w - (16 + side + 24),
+        panelX: 18 + side + 22,
+        panelW: Math.max(220, w - (18 + side + 40) - 48),
         wide: true
       };
     }
@@ -5400,29 +5587,31 @@ window.D21 = {
     const dh = img.naturalHeight * sc;
     ctx.drawImage(img, box.x + (box.s - dw) / 2, box.y + (box.s - dh) / 2, dw, dh);
   }
-  function drawModeRow(y, k, centerX, maxW) {
+  function drawModeRow(y, k, centerX, maxW, wantH) {
     const n = Math.max(1, MODES.length);
-    const gap = 8;
-    const cols = maxW < 520 ? 2 : n;
+    const gap = 12;
+    const cols = h < 520 || maxW < 680 ? 2 : n;
     const rows = Math.ceil(n / cols);
-    const bw = Math.min(168, (maxW - gap * (cols - 1)) / cols);
-    const bh = Math.max(34, 38 * k);
+    const bw = Math.min(240, (maxW - gap * (cols - 1)) / cols);
+    const bh = wantH || Math.max(48, 54 * k);
     const totalW = cols * bw + (cols - 1) * gap;
     const x0 = centerX - totalW / 2;
+    const nameSize = Math.max(14, Math.min(20, bh * 0.34));
+    const bandSize = Math.max(11, nameSize - 4);
     MODES.forEach((m, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const x = x0 + col * (bw + gap);
       const yy = y + row * (bh + gap);
       const on = m.id === speedMode;
-      roundRect(x, yy, bw, bh, 12);
+      roundRect(x, yy, bw, bh, 14);
       ctx.fillStyle = on ? "#17263a" : PANEL;
       ctx.fill();
-      ctx.lineWidth = on ? 2.5 : 1.5;
+      ctx.lineWidth = on ? 3 : 2;
       ctx.strokeStyle = on ? YELLOW : "#2a3b52";
       ctx.stroke();
-      text(m.name, x + bw / 2, yy + bh * 0.38, Math.max(11, 12 * k), on ? YELLOW : INK);
-      text(m.band, x + bw / 2, yy + bh * 0.72, Math.max(9, 10 * k), "#c5d0de");
+      text(m.name, x + bw / 2, yy + bh * 0.38, nameSize, on ? YELLOW : INK);
+      text(m.band, x + bw / 2, yy + bh * 0.74, bandSize, "#c5d0de");
       hitButton("mode-" + m.id, x, yy, bw, bh);
     });
     return rows * bh + (rows - 1) * gap;
@@ -5432,66 +5621,75 @@ window.D21 = {
     ctx.fillRect(0, 0, w, h);
     const box = coverBox(kind);
     drawCoverImage(box);
-    const k = Math.max(0.72, Math.min(w / 900, 1));
     const center = box.panelX + box.panelW / 2;
-    let y = box.wide ? Math.max(78, (h - 210) / 2) : box.y + box.s + 10;
-    const modeH = drawModeRow(y, k, center, box.panelW);
-    y += modeH + 10;
+    const top = box.wide ? 14 : box.y + box.s + 16;
+    const bottom = h - 28;
+    const avail = Math.max(180, bottom - top);
+    const ui = h < 480 ? 1 : Math.max(1, Math.min(1.35, Math.min(w, h) / 420));
+    const modeBh = h < 480 ? 42 : Math.max(52, Math.min(64, avail * 0.15));
+    const modeH = drawModeRow(top, ui, center, box.panelW, modeBh);
+    let y = top + modeH + Math.max(28, avail * 0.05);
     if (kind === "title") {
-      const bw = Math.min(box.panelW * 0.9, 280);
-      const bh = 52;
+      const bw = Math.min(box.panelW * 0.92, 340);
+      const bh = Math.max(58, Math.round(64 * ui));
       const bx = center - bw / 2;
-      roundRect(bx, y, bw, bh, 26);
+      roundRect(bx, y, bw, bh, bh / 2);
       ctx.fillStyle = "#05080d";
       ctx.fill();
       ctx.lineWidth = 2;
       ctx.strokeStyle = YELLOW;
       ctx.stroke();
-      text("¿Te subes a bordo?", center, y + 16, 12, "#d5dbe3");
-      text("JUGAR", center, y + 34, 18, YELLOW);
+      text("¿Te subes a bordo?", center, y + bh * 0.32, Math.max(13, 15 * ui), "#d5dbe3");
+      text("JUGAR", center, y + bh * 0.68, Math.max(20, 24 * ui), YELLOW);
       hitButton("play", bx, y, bw, bh);
-      y += bh + 8;
-      const cw = 120;
-      text("Créditos", center, y + 8, 13, INK);
-      hitButton("credits", center - cw / 2, y - 6, cw, 28);
-      y += 28;
-      const help = "Flechas o WASD. En el móvil, arrastra: el submarino sigue el dedo. El disparo azul sube solo y no sale otro hasta que impacta o sale de la pantalla. En el iPhone, Añadir a pantalla de inicio lo pone a pantalla completa.";
-      wrapLines(help, Math.min(box.panelW, w - 24), 12).forEach((ln) => {
-        text(ln, center, y, 12, "#d5dbe3");
-        y += 16;
+      y += bh + 16;
+      text("Créditos", center, y + 10, Math.max(15, 16 * ui), INK);
+      hitButton("credits", center - 70, y - 4, 140, 32);
+      y += 36;
+      const helpSize = Math.max(14, Math.round(15 * ui));
+      const help = "Flechas o WASD. En el móvil, arrastra el dedo: el submarino va hacia él, también arriba y abajo. El cañón apunta solo, en cualquier dirección.";
+      wrapLines(help, Math.min(box.panelW - 8, w - 36), helpSize).forEach((ln) => {
+        text(ln, center, y, helpSize, "#d5dbe3");
+        y += helpSize + 6;
       });
       if (showIosHint) {
-        text("iPhone: Añadir a pantalla de inicio para jugar a pantalla completa.", center, y + 4, 12, "#05C3DE");
+        y += 6;
+        text("iPhone: Añadir a pantalla de inicio para jugar a pantalla completa.", center, y, 14, "#05C3DE");
       }
     } else {
-      text("Fin de la partida", center, y, 22 * k, INK);
-      y += 22;
-      text(fmt(score), center, y + 8, 36 * k, YELLOW);
-      y += 40;
-      text("Modo: " + modeLabel() + (mixed ? " · mixta" : ""), center, y, 15, INK);
-      y += 18;
+      const head = h < 480 ? 22 : Math.max(26, Math.round(28 * ui));
+      text("Fin de la partida", center, y, head, INK);
+      y += head * 0.55 + (h < 480 ? 16 : 22);
+      const scoreSize = h < 480 ? 32 : Math.max(40, Math.round(46 * ui));
+      text(fmt(score), center, y, scoreSize, YELLOW);
+      y += scoreSize * 0.55 + (h < 480 ? 12 : 16);
       const heard = topTrack();
-      text("Más escuchada: " + (heard ? heard.title : "—"), center, y, 14, "#d5dbe3");
-      y += 18;
-      text((mixed ? "Mixta " : "Récord ") + fmt(mixed ? recordMixta : record), center, y, 14, INK);
-      y += 18;
-      text("Problemas resueltos: " + problemas, center, y, 14, INK);
-      y += 18;
-      text("Críticas convertidas: " + criticas, center, y, 14, INK);
-      y += 16;
-      const bw = Math.min(box.panelW * 0.9, 280);
-      const bh = 48;
+      const stats = [
+        "Modo: " + modeLabel() + (mixed ? " · mixta" : ""),
+        "Más escuchada: " + (heard ? heard.title : "—"),
+        (mixed ? "Récord mixto: " : "Récord: ") + fmt(mixed ? recordMixta : record),
+        "Problemas resueltos: " + problemas,
+        "Críticas convertidas: " + criticas
+      ];
+      const stat = h < 480 ? 15 : Math.max(16, Math.round(18 * ui));
+      stats.forEach((line) => {
+        text(line, center, y, stat, INK);
+        y += stat + (h < 480 ? 6 : 10);
+      });
+      y += h < 480 ? 6 : 10;
+      const bw = Math.min(box.panelW * 0.92, 360);
+      const bh = h < 480 ? 44 : Math.max(52, Math.round(56 * ui));
       const bx = center - bw / 2;
-      roundRect(bx, y, bw, bh, 24);
+      roundRect(bx, y, bw, bh, bh / 2);
       ctx.fillStyle = "#05080d";
       ctx.fill();
       ctx.lineWidth = 2;
       ctx.strokeStyle = YELLOW;
       ctx.stroke();
-      text("Jugar otra vez", center, y + bh / 2, 18, YELLOW);
+      text("Jugar otra vez", center, y + bh / 2, Math.max(18, 20 * ui), YELLOW);
       hitButton("again", bx, y, bw, bh);
-      y += bh + 16;
-      text("¿Te subes a bordo?  @democracia21_", center, y, 13, INK);
+      y += bh + 18;
+      text("¿Te subes a bordo?  @democracia21_", center, y, Math.max(15, 16 * ui), INK);
     }
     const line = creditLine();
     const size = w < 520 ? 10 : 12;
@@ -5785,6 +5983,9 @@ window.D21 = {
   window.addEventListener("pointermove", onMove, { passive: false });
   window.addEventListener("pointerup", onUp);
   window.addEventListener("pointercancel", onUp);
+  window.addEventListener("lostpointercapture", onUp);
+  canvas.addEventListener("touchcancel", onTouchDone, { passive: true });
+  canvas.addEventListener("touchend", onTouchDone, { passive: true });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   window.addEventListener("blur", () => { downKeys.clear(); firePointer = null; torpPointer = null; joy = null; drag = null; });
   loadSprites();
