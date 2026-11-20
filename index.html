@@ -460,8 +460,10 @@ window.D21 = {
 <script>"use strict";
 (() => {
   const canvas = document.getElementById("c");
-  let ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-  if (!ctx) ctx = canvas.getContext("2d", { alpha: false });
+  let ctx = null;
+  try { ctx = canvas.getContext("2d", { alpha: false, desynchronized: true }); } catch (e) {}
+  if (!ctx) { try { ctx = canvas.getContext("2d", { alpha: false }); } catch (e) {} }
+  if (!ctx) { try { ctx = canvas.getContext("2d"); } catch (e) {} }
   let filterOk = !(/AppleWebKit/.test(navigator.userAgent || "") && !/Chrome|CriOS|Edg|Android/.test(navigator.userAgent || ""));
   let mobileGfx = false;
   const showFps = /(?:^|[?&])fps=1(?:&|$)/.test(location.search);
@@ -473,9 +475,10 @@ window.D21 = {
   }
   if (!ctx) return;
 
-  const PACK = window.D21 || { version: "v19", date: "19/11/2026", modes: [], tracks: [], criticas: [], problemas: [], esloganes: {} };
-  const GAME_VERSION = PACK.version || "v19";
-  const GAME_DATE = PACK.date || "19/11/2026";
+  const PACK = window.D21 || { version: "v20", date: "20/11/2026", modes: [], tracks: [], criticas: [], problemas: [], esloganes: {} };
+  const GAME_VERSION = PACK.version || "v20";
+  const GAME_DATE = PACK.date || "20/11/2026";
+  const GAME_BUILD = "v20d";
   const ASSET_BASE = window.D21_BASE || "";
   const MODES = PACK.modes || [];
   const TRACKS = PACK.tracks || [];
@@ -608,7 +611,7 @@ window.D21 = {
 
   const downKeys = new Set();
   const hits = [];
-  const player = { x: 200, y: 400, facing: 1, alive: true, invUntil: 0, cambioUntil: 0, shield: 0, rapidUntil: 0 };
+  const player = { x: 200, y: 400, facing: 1, alive: true, invUntil: 0, cambioUntil: 0, shield: 0, rapidUntil: 0, rapidWall: 0 };
   let ships = [];
   let planes = [];
   let mines = [];
@@ -847,13 +850,40 @@ window.D21 = {
   function waterY() { return lerp(h * 0.68, playWater(), dipT()); }
   function bedY() { return lerp(Math.max(h * 1.05, playBed() + 40), playBed(), dipT()); }
   let perfEpoch = null;
-  function beatNow() {
-    const wall = perfEpoch == null ? 0 : (performance.now() - perfEpoch) / 1000 / BEAT - beatOffset;
-    if (audio && musicEpoch != null && audio.state === "running") {
-      const ab = (audio.currentTime - musicEpoch - beatOffset) / BEAT;
-      if (ab + 0.4 >= wall) return ab;
+  let clockArmed = false;
+  let clockBeat = 0;
+  let lastAudioClock = -1;
+  const bootErrors = [];
+  function armClock() {
+    clockArmed = true;
+    clockBeat = 0;
+    lastAudioClock = -1;
+    perfEpoch = performance.now();
+  }
+  function readAudioBeat() {
+    if (!audio || musicEpoch == null || audio.state !== "running") return null;
+    const t = audio.currentTime;
+    if (!Number.isFinite(t) || !(t > lastAudioClock + 0.0005)) return null;
+    lastAudioClock = t;
+    const ab = (t - musicEpoch - (beatOffset || 0)) / BEAT;
+    return Number.isFinite(ab) ? ab : null;
+  }
+  function advanceClock(dt) {
+    if (!clockArmed) return;
+    const step = Math.max(0, dt) / BEAT;
+    if (muted) {
+      clockBeat += step;
+      return;
     }
-    return wall;
+    const ab = readAudioBeat();
+    if (ab == null || ab + 0.35 < clockBeat || ab > clockBeat + 1.25) {
+      clockBeat += step;
+      return;
+    }
+    clockBeat = ab;
+  }
+  function beatNow() {
+    return clockArmed ? clockBeat : 0;
   }
   function oleadaNow() { return 1 + Math.floor(Math.max(0, beatNow()) / PHRASE); }
   function groove() {
@@ -1190,7 +1220,10 @@ window.D21 = {
     if (extra === "escudo") player.shield = 1;
     else if (extra === "vida") lives = Math.min(4, lives + 1);
     else if (extra === "recupera") lives += 1;
-    else player.rapidUntil = beatNow() + 6 / BEAT;
+    else {
+      player.rapidUntil = beatNow() + 6 / BEAT;
+      player.rapidWall = performance.now() + 6000;
+    }
     const label = extra === "escudo" ? "escudo" : extra === "vida" ? "vida extra" : extra === "recupera" ? "vida recuperada" : "disparo rápido";
     return label;
   }
@@ -1239,7 +1272,7 @@ window.D21 = {
     }
   }
   function pump() {
-    if (musicEpoch == null) return;
+    if (!clockArmed) return;
     const b = beatNow();
     if (b < 0) return;
     const half = Math.floor(b * 2);
@@ -1592,8 +1625,9 @@ window.D21 = {
       kind: target ? target.kind : "",
       ref: target ? target.ref : null
     });
+    shots += 1;
     if (bolts.length > 14) bolts.splice(0, bolts.length - 14);
-    sfxShot();
+    try { sfxShot(); } catch (e) {}
   }
   function updateBolts(dt) {
     const step = Math.max(0, Math.min(0.05, dt || 0));
@@ -1733,29 +1767,37 @@ window.D21 = {
     for (let i = missiles.length - 1; i >= 0; i--) stepCharge(missiles[i], step);
     for (let i = mines.length - 1; i >= 0; i--) stepCharge(mines[i], step);
   }
-  function autoWeapons() {
+  let gunAcc = 0;
+  let torpAcc = 0;
+  function autoWeapons(dt) {
     if (mode !== "play" || !player.alive) return;
-    const b = beatNow();
-    const rapid = b < player.rapidUntil;
-    const gunStep = rapid ? 0.5 : 1;
-    const gunIdx = Math.floor(b / gunStep + 0.05);
-    if (gunIdx !== shotGate && b <= gunIdx * gunStep + 0.2) {
-      shotGate = gunIdx;
-      const cap = rapid ? 12 : 6;
-      if (bolts.length < cap) fireBoltAt(pickGunTarget());
+    const step = Math.max(0, Math.min(0.5, dt || 0));
+    const rapid = performance.now() < (player.rapidWall || 0);
+    const gunEvery = Math.max(0.16, (rapid ? 0.5 : 1) * BEAT);
+    const torpEvery = Math.max(0.28, BEAT);
+    gunAcc += step;
+    torpAcc += step;
+    const cap = rapid ? 12 : 6;
+    let n = 0;
+    const maxN = rapid ? 3 : 2;
+    while (gunAcc >= gunEvery && n < maxN && bolts.length < cap) {
+      gunAcc -= gunEvery;
+      fireBoltAt(pickGunTarget());
+      n += 1;
     }
-    const idx = Math.floor(b + 0.05);
-    if (idx === lastTorpBeat || b > idx + 0.2) return;
+    if (gunAcc > gunEvery) gunAcc = gunEvery * 0.2;
+    if (torpAcc < torpEvery) return;
+    torpAcc -= torpEvery;
+    if (torpAcc > torpEvery) torpAcc = 0;
     const torpCap = rapid ? 2 : 1;
     if (tubes.length >= torpCap) return;
-    lastTorpBeat = idx;
     tubes.push({
       x: player.x,
       y0: player.y - 10 * subScale(),
-      t0: b,
+      t0: beatNow(),
       v: Math.max(90, (player.y + 80) / 1.5)
     });
-    sfxTorp();
+    try { sfxTorp(); } catch (e) {}
   }
   const arrowHolds = new Map();
   function showPads() { return false; }
@@ -1883,7 +1925,7 @@ window.D21 = {
     player.y = clamp(player.y + (Number.isFinite(v.y) ? v.y : 0) * sp * dt, band.top, band.bot);
     if (v.x > 0.25) player.facing = 1;
     if (v.x < -0.25) player.facing = -1;
-    autoWeapons();
+    autoWeapons(arguments[1] || dt);
     updateBolts(dt);
     updateCharges(dt);
     updateReplies(dt);
@@ -1940,10 +1982,12 @@ window.D21 = {
       s.speed = sp;
       s.hp = 3;
     }
-    shotGate = Math.floor(beatNow() + 0.07) - 1;
+    shotGate = -999;
+    gunAcc = 999;
+    torpAcc = 0;
     banner = { text: "Oleada 1", until: beatNow() + 2.5 };
   }
-  function update(dt) {
+  function update(dt, clockDt) {
     if (mode === "pause") return;
     for (const b of bubbles) {
       b.y -= b.v * dt;
@@ -1974,7 +2018,7 @@ window.D21 = {
       }
       pump();
     } else if (mode === "play") {
-      updatePlay(dt);
+      updatePlay(dt, clockDt);
       pump();
     } else if (mode === "dying") {
       cleanup();
@@ -2169,6 +2213,9 @@ window.D21 = {
     player.cambioUntil = 0;
     player.shield = 0;
     player.rapidUntil = 0;
+    player.rapidWall = 0;
+    gunAcc = 0;
+    torpAcc = 0;
     player.facing = 1;
     lemaCursor = 0;
     Object.keys(trackHeard).forEach((id) => { delete trackHeard[id]; });
@@ -2212,7 +2259,9 @@ window.D21 = {
   }
   function begin() {
     if (mode !== "title" && mode !== "over") return;
+    armClock();
     try { ensureAudio(); } catch (e) {}
+    try { unlockAudio(); } catch (e) {}
     try { startBuffer(null, currentTrack(), false); } catch (e) {}
     try {
       resetMatch();
@@ -2380,51 +2429,100 @@ window.D21 = {
     const dy = p.y - c.y;
     return dx * dx + dy * dy <= (c.r + pad) * (c.r + pad);
   }
-  function posOf(e) {
-    const t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
-    if (!t || !Number.isFinite(t.clientX) && !(Number.isFinite(t.offsetX) && t.target === canvas)) return null;
-    const turned = document.documentElement.classList.contains("turned");
+  const contacts = new Map();
+  let steerAt = 0;
+  let mouseDown = false;
+  function gamePoint(t) {
+    if (!t || !Number.isFinite(t.clientX) || !Number.isFinite(t.clientY)) return null;
     const r = canvas.getBoundingClientRect();
+    if (!(r.width > 1) || !(r.height > 1)) return null;
+    const vx = t.clientX - r.left;
+    const vy = t.clientY - r.top;
+    const turned = document.documentElement.classList.contains("turned");
     let x;
     let y;
     if (!turned) {
-      if (t.target === canvas && Number.isFinite(t.offsetX) && Number.isFinite(t.offsetY)) {
-        const sx = canvas.clientWidth || w;
-        const sy = canvas.clientHeight || h;
-        x = t.offsetX * (w / sx);
-        y = t.offsetY * (h / sy);
-      } else {
-        x = ((t.clientX - r.left) / (r.width || w)) * w;
-        y = ((t.clientY - r.top) / (r.height || h)) * h;
-      }
+      x = (vx / r.width) * w;
+      y = (vy / r.height) * h;
     } else {
-      const vx = t.clientX - r.left;
-      const vy = t.clientY - r.top;
-      x = (vy / (r.height || 1)) * w;
-      y = ((r.width - vx) / (r.width || 1)) * h;
+      // #stage uses rotate(90deg) translateY(-100%) from the top left.
+      // Visual Y runs along the game's X. Visual X runs back along the game's Y.
+      x = (vy / r.height) * w;
+      y = ((r.width - vx) / r.width) * h;
     }
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
     return { x, y };
   }
-  function releasePointer(id) {
-    fingers.delete(id);
-    if (moveId !== id) return;
+  function posOf(e) {
+    const t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+    return gamePoint(t);
+  }
+  function clearSteer() {
     moveId = null;
     drag = null;
-    for (const [fid, finger] of fingers) {
-      if (!finger.ui && Number.isFinite(finger.x) && Number.isFinite(finger.y)) {
-        moveId = fid;
-        drag = { id: fid, x: finger.x, y: finger.y };
-        break;
-      }
+  }
+  function pickSteer() {
+    let best = null;
+    for (const c of contacts.values()) {
+      if (c.ui || !Number.isFinite(c.x) || !Number.isFinite(c.y)) continue;
+      if (!best || c.t >= best.t) best = c;
     }
+    if (!best) { clearSteer(); return; }
+    moveId = best.id;
+    drag = { x: best.x, y: best.y };
+  }
+  function dropId(id) {
+    contacts.delete(id);
+    fingers.delete(id);
+    pickSteer();
+  }
+  function releaseAllSteer() {
+    contacts.clear();
+    fingers.clear();
+    clearSteer();
+    mouseDown = false;
+    joy = null;
+  }
+  function takeSteer(id, p) {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+      dropId(id);
+      return;
+    }
+    if (mode !== "play") return;
+    const rec = { id, ui: false, x: p.x, y: p.y, t: performance.now() };
+    contacts.set(id, rec);
+    fingers.set(id, rec);
+    moveId = id;
+    drag = { x: p.x, y: p.y };
+    touchSeen = true;
+    steerAt = rec.t;
+  }
+  function steerWatchdog() {
+    if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) {
+      const band = subLimits();
+      player.x = w * 0.5;
+      player.y = (band.top + band.bot) * 0.5;
+    }
+    for (const [id, c] of contacts) {
+      if (!Number.isFinite(c.x) || !Number.isFinite(c.y)) contacts.delete(id);
+    }
+    if (drag && (!Number.isFinite(drag.x) || !Number.isFinite(drag.y))) clearSteer();
+    let live = false;
+    for (const c of contacts.values()) if (!c.ui) live = true;
+    if (!live && !mouseDown) clearSteer();
   }
   function uiControl(p) {
     if (pointIn(p, mutePos(), 8)) return "mute";
     if ((mode === "intro" || mode === "play" || mode === "pause") && pointIn(p, pausePos(), 8)) return "pause";
     return hitAt(p.x, p.y);
   }
+  let lastUiId = "";
+  let lastUiAt = 0;
   function useControl(id) {
+    const now = performance.now();
+    if (id && id === lastUiId && now - lastUiAt < 450) return true;
+    lastUiId = id || "";
+    lastUiAt = now;
     if (id === "mute") { toggleMute(); return true; }
     if (id === "pause") { togglePause(); return true; }
     if (id === "play" && mode === "title") { try { lockLandscape(); } catch (err) {} begin(); return true; }
@@ -2442,23 +2540,41 @@ window.D21 = {
     }
     return false;
   }
-  function onDown(e) {
-    if (e.cancelable) e.preventDefault();
-    const p = posOf(e);
-    if (!p) return;
-    if (moveId != null && !fingers.has(moveId)) releasePointer(moveId);
-    const ui = uiControl(p);
-    if (ui && useControl(ui)) {
-      fingers.set(e.pointerId, { ui: true });
+  function contactDown(id, p) {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+      dropId(id);
       return;
     }
-    if (inMatch() && !fullscreenOn()) { try { lockLandscape(); } catch (err) {} }
+    const ui = uiControl(p);
+    if (ui && useControl(ui)) {
+      const mark = { id, ui: true, x: p.x, y: p.y, t: performance.now() };
+      contacts.set(id, mark);
+      fingers.set(id, mark);
+      return;
+    }
     if (mode === "intro") skipIntro();
-    if (mode !== "play") return;
-    touchSeen = true;
-    fingers.set(e.pointerId, { ui: false, x: p.x, y: p.y });
-    moveId = e.pointerId;
-    drag = { id: e.pointerId, x: p.x, y: p.y };
+    takeSteer(id, p);
+  }
+  function onDown(e) {
+    if (!e) return;
+    if (e.cancelable) e.preventDefault();
+    mouseDown = e.pointerType === "mouse" || e.pointerType === "pen";
+    try { if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    contactDown("p" + e.pointerId, gamePoint(e));
+  }
+  function onTouchStart(e) {
+    if (e.cancelable) e.preventDefault();
+    syncTouches(e);
+    const list = e.changedTouches || [];
+    for (let i = 0; i < list.length; i++) contactDown("t" + list[i].identifier, gamePoint(list[i]));
+  }
+  function syncTouches(e) {
+    const live = new Set();
+    const list = e.touches || [];
+    for (let i = 0; i < list.length; i++) live.add("t" + list[i].identifier);
+    for (const id of contacts.keys()) {
+      if (String(id).indexOf("t") === 0 && !live.has(id)) contacts.delete(id);
+    }
   }
   function aimJoy(p) {
     if (!joy) return;
@@ -2471,21 +2587,39 @@ window.D21 = {
     joy.dy = (dy / m) * k;
   }
   function onMove(e) {
+    if (!e) return;
+    if (e.pointerType === "mouse" && !e.buttons) return;
     if (e.cancelable) e.preventDefault();
-    const held = fingers.get(e.pointerId);
-    if (!held || held.ui) return;
-    const p = posOf(e);
-    if (!p) return;
-    held.x = p.x;
-    held.y = p.y;
-    if (moveId === e.pointerId) drag = { id: e.pointerId, x: p.x, y: p.y };
+    const p = gamePoint(e);
+    if (!p) { dropId("p" + e.pointerId); return; }
+    const prev = contacts.get("p" + e.pointerId);
+    if (prev && prev.ui && mode !== "play") return;
+    takeSteer("p" + e.pointerId, p);
   }
   function onUp(e) {
-    releasePointer(e.pointerId);
+    if (!e) return;
+    mouseDown = false;
+    try { if (canvas.releasePointerCapture && canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId); } catch (err) {}
+    dropId("p" + e.pointerId);
+  }
+  function onTouchMove(e) {
+    if (e.cancelable) e.preventDefault();
+    syncTouches(e);
+    const list = e.changedTouches || [];
+    for (let i = 0; i < list.length; i++) {
+      const p = gamePoint(list[i]);
+      if (!p) { dropId("t" + list[i].identifier); continue; }
+      takeSteer("t" + list[i].identifier, p);
+    }
   }
   function onTouchDone(e) {
-    const touches = e.changedTouches || [];
-    for (let i = 0; i < touches.length; i++) releasePointer(touches[i].identifier);
+    if (!e.touches || e.touches.length === 0) {
+      releaseAllSteer();
+      return;
+    }
+    syncTouches(e);
+    for (const id of [...contacts.keys()]) if (String(id).charAt(0) === "p") contacts.delete(id);
+    pickSteer();
   }
 
   function roundRect(x, y, bw, bh, r) {
@@ -5896,6 +6030,7 @@ window.D21 = {
     seaBake = null;
     canvas.style.width = w + "px";
     canvas.style.height = h + "px";
+    canvas.style.touchAction = "none";
     canvas.width = Math.max(1, Math.round(w * dpr));
     canvas.height = Math.max(1, Math.round(h * dpr));
     if (lastW && (lastW !== w || lastH !== h)) scaleWorld(w / lastW, h / lastH);
@@ -5905,7 +6040,9 @@ window.D21 = {
   let frameSamples = [];
   let lowFx = false;
   function frame(ts) {
-    const wall = Math.min(0.1, Math.max(0, lastTs ? (ts - lastTs) / 1000 : 0.016));
+    const rawDt = Math.max(0, lastTs ? (ts - lastTs) / 1000 : 0.016);
+    const wall = Math.min(0.1, rawDt);
+    const clockDt = Math.min(0.5, rawDt);
     lastTs = ts;
     if (audio && audio.state === "running") {
       const raw = audio.currentTime - lastAudioT;
@@ -5913,8 +6050,15 @@ window.D21 = {
       lastAudioT = audio.currentTime;
     }
     const t0 = performance.now();
-    update(wall);
-    draw();
+    try {
+      steerWatchdog();
+      if (mode === "intro" || mode === "play" || mode === "dying") advanceClock(clockDt);
+      update(wall, clockDt);
+      draw();
+    } catch (err) {
+      bootErrors.push(String(err && err.stack || err).slice(0, 500));
+      if (bootErrors.length > 8) bootErrors.shift();
+    }
     const ms = performance.now() - t0;
     perfHud.acc += ms;
     perfHud.n += 1;
@@ -5961,33 +6105,41 @@ window.D21 = {
     let src = e;
     if (e.changedTouches && e.changedTouches[0]) src = e.changedTouches[0];
     const p = posOf(src);
+    if (!p) return;
     const id = hitAt(p.x, p.y);
     if ((id === "play" && mode === "title") || (id === "again" && mode === "over")) {
       try { lockLandscape(); } catch (err) {}
       begin();
     }
   }
-  canvas.addEventListener("pointerdown", onDown, { passive: false });
-  canvas.addEventListener("pointerup", startFromEvent);
-  canvas.addEventListener("click", startFromEvent);
-  canvas.addEventListener("touchend", startFromEvent, { passive: false });
+  const hear = { capture: true, passive: false };
+  document.addEventListener("pointerdown", onDown, hear);
+  document.addEventListener("pointermove", onMove, hear);
+  document.addEventListener("pointerup", onUp, hear);
+  document.addEventListener("pointercancel", onUp, hear);
+  document.addEventListener("lostpointercapture", onUp, hear);
+  document.addEventListener("touchstart", onTouchStart, hear);
+  document.addEventListener("touchmove", onTouchMove, hear);
+  document.addEventListener("touchend", onTouchDone, hear);
+  document.addEventListener("touchcancel", onTouchDone, hear);
+  document.addEventListener("pointerup", startFromEvent, hear);
+  document.addEventListener("click", startFromEvent, hear);
+  document.addEventListener("touchend", startFromEvent, hear);
+  document.addEventListener("contextmenu", (e) => e.preventDefault(), hear);
   window.addEventListener("touchstart", unlockAudio, { capture: true, passive: true });
   window.addEventListener("touchend", unlockAudio, { capture: true, passive: true });
   window.addEventListener("click", unlockAudio, true);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && audio && (audio.state === "suspended" || audio.state === "interrupted")) unlockAudio();
+    if (document.visibilityState !== "visible") releaseAllSteer();
+    else if (audio && (audio.state === "suspended" || audio.state === "interrupted")) unlockAudio();
   });
-  const blockScroll = (e) => { if (e.cancelable) e.preventDefault(); };
-  document.addEventListener("touchmove", blockScroll, { passive: false });
-  document.addEventListener("gesturestart", blockScroll, { passive: false });
-  window.addEventListener("pointermove", onMove, { passive: false });
-  window.addEventListener("pointerup", onUp);
-  window.addEventListener("pointercancel", onUp);
-  window.addEventListener("lostpointercapture", onUp);
-  canvas.addEventListener("touchcancel", onTouchDone, { passive: true });
-  canvas.addEventListener("touchend", onTouchDone, { passive: true });
-  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-  window.addEventListener("blur", () => { downKeys.clear(); firePointer = null; torpPointer = null; joy = null; drag = null; });
+  document.addEventListener("gesturestart", (e) => { if (e.cancelable) e.preventDefault(); }, hear);
+  window.addEventListener("blur", () => {
+    downKeys.clear();
+    firePointer = null;
+    torpPointer = null;
+    releaseAllSteer();
+  });
   loadSprites();
 
   window.__D21 = {
@@ -6025,10 +6177,14 @@ window.D21 = {
         session: navigator.audioSession && navigator.audioSession.type || ""
       };
     },
+    map(x, y) { return gamePoint({ clientX: x, clientY: y }); },
+    setDrag(x, y) { drag = { x, y }; moveId = "probe"; },
     snapshot() {
       return {
-        mode, score, lives, shots, music: musicState, offset: beatOffset,
-        beat: musicEpoch == null ? 0 : beatNow(),
+        mode, score, lives, shots, bolts: bolts.length, music: musicState, offset: beatOffset,
+        version: GAME_VERSION, date: GAME_DATE, build: GAME_BUILD,
+        beat: beatNow(),
+        errors: bootErrors.slice(),
         buf: musicBuffer ? musicBuffer.duration : 0,
         ships: ships.length, planes: planes.length, mines: mines.length,
         criticas, problemas, flips: flips.length, replies: replies.length,
@@ -6040,6 +6196,7 @@ window.D21 = {
         mineY: mines.length ? mineY(mines[0]) : null,
         mineHard: mines.length ? !!mines[0].hard : false,
         playerX: player.x, playerY: player.y, w, h, speedMode, bpm: currentBpm, muted,
+        dragX: drag ? drag.x : null, dragY: drag ? drag.y : null, contacts: contacts.size, moveId,
         musicOn, trackId: currentTrack() ? currentTrack().id : "",
         audioState: audio ? audio.state : "none",
         musicFile: (currentTrack() && (currentTrack().fileUsed || (musicCandidates(currentTrack())[0] || ""))),
