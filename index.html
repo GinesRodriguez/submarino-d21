@@ -71,8 +71,10 @@ html.turned #stage {
   left: 0;
   inset: auto;
   transform-origin: top left;
-  transform: rotate(90deg) translateY(-100%);
+  transform: translate3d(0, 0, 0) rotate(90deg) translateY(-100%);
+  will-change: transform;
 }
+#c { will-change: transform; }
 noscript p { font-family: Arial, sans-serif; padding: 24px; color: #f4f7fb; }
 </style>
 </head>
@@ -458,10 +460,14 @@ window.D21 = {
 <script>"use strict";
 (() => {
   const canvas = document.getElementById("c");
-  const ctx = canvas.getContext("2d", { alpha: false });
+  let ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+  if (!ctx) ctx = canvas.getContext("2d", { alpha: false });
   let filterOk = !(/AppleWebKit/.test(navigator.userAgent || "") && !/Chrome|CriOS|Edg|Android/.test(navigator.userAgent || ""));
+  let mobileGfx = false;
+  const showFps = /(?:^|[?&])fps=1(?:&|$)/.test(location.search);
+  const perfHud = { text: 0, path: 0, shadow: 0, blit: 0, ms: 0, fps: 0, acc: 0, n: 0 };
   function setFilter(v) {
-    if (!filterOk) return;
+    if (!filterOk || mobileGfx) return;
     try { ctx.filter = v; }
     catch (e) { filterOk = false; }
   }
@@ -2440,10 +2446,16 @@ window.D21 = {
     ctx.textAlign = align || "center";
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";
+    if (showFps) perfHud.text += 1;
     if (stroke && sw > 0) {
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = sw;
-      ctx.strokeText(str, x, y);
+      if (mobileGfx) {
+        ctx.fillStyle = stroke;
+        ctx.fillText(str, x + 1, y + 1);
+      } else {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = sw;
+        ctx.strokeText(str, x, y);
+      }
     }
     ctx.fillStyle = fill;
     ctx.fillText(str, x, y);
@@ -2459,11 +2471,14 @@ window.D21 = {
   }
   function drawSwell(wy) {
     const t = seaT();
+    const step = mobileGfx ? 48 : 14;
+    const layers = mobileGfx ? 1 : 2;
+    if (showFps) perfHud.path += 1;
     function layer(y0, amp, freq, speed, color, depth) {
       ctx.beginPath();
       ctx.moveTo(-24, wy + depth);
-      for (let x = -24; x <= w + 24; x += 14) {
-        const yy = wy + y0 + Math.sin(x * freq + t * speed) * amp + Math.sin(x * freq * 2.2 - t * speed * 0.7) * amp * 0.33;
+      for (let x = -24; x <= w + 24; x += step) {
+        const yy = wy + y0 + Math.sin(x * freq + t * speed) * amp;
         ctx.lineTo(x, yy);
       }
       ctx.lineTo(w + 24, wy + depth);
@@ -2471,8 +2486,9 @@ window.D21 = {
       ctx.fillStyle = color;
       ctx.fill();
     }
-    layer(0, 4.2, 0.016, 1.15, "rgba(36, 126, 186, 0.42)", 22);
-    layer(3, 2.8, 0.029, -0.9, "rgba(210, 240, 255, 0.28)", 16);
+    layer(0, mobileGfx ? 3.2 : 4.2, 0.016, 1.15, "rgba(36, 126, 186, 0.42)", mobileGfx ? 14 : 22);
+    if (layers > 1) layer(3, 2.8, 0.029, -0.9, "rgba(210, 240, 255, 0.28)", 16);
+    if (mobileGfx) return;
     ctx.fillStyle = "rgba(255,255,255,0.8)";
     for (let i = 0; i < 22; i++) {
       const x = ((i * 83 + t * 36) % (w + 30)) - 10;
@@ -2575,6 +2591,7 @@ window.D21 = {
   }
   function outlineBlit(img, cx, cy, dw, dh, flipX, alpha, width, bright) {
     if (!spriteReady(img)) return false;
+    if (mobileGfx) return blit(img, cx, cy, dw, dh, flipX, alpha);
     const o = Math.max(2, width || 3);
     ctx.save();
     ctx.translate(cx, cy);
@@ -3724,7 +3741,7 @@ window.D21 = {
     const sc = Math.max(0.8, speedScale());
     const len = 54 * sc;
     ctx.save();
-    ctx.globalCompositeOperation = "lighter";
+    if (!mobileGfx) ctx.globalCompositeOperation = "lighter";
     const glow = ctx.createLinearGradient(t.x, y - len, t.x, y + 10);
     glow.addColorStop(0, "rgba(255,255,255,0)");
     glow.addColorStop(0.35, "rgba(90,230,255,0.28)");
@@ -3978,16 +3995,65 @@ window.D21 = {
     }
     return { img, x, y: wy - dh, dw, dh };
   }
-  function drawDaySky() {
-    const wy = waterY();
-    const sky = ctx.createLinearGradient(0, 0, 0, wy);
+  let skyBake = null;
+  function ensureSkyBake(wy) {
+    const img = SPRITES.sky;
+    if (!spriteReady(img)) return null;
+    const sc = Math.max(w / img.naturalWidth, wy / img.naturalHeight);
+    const dw = Math.max(1, Math.ceil(img.naturalWidth * sc));
+    const dh = Math.max(1, Math.ceil(img.naturalHeight * sc));
+    const key = dw + "x" + dh;
+    if (skyBake && skyBake.key === key) return skyBake;
+    const c = document.createElement("canvas");
+    c.width = dw;
+    c.height = dh;
+    const g = c.getContext("2d", { alpha: false });
+    const sky = g.createLinearGradient(0, 0, 0, dh);
     sky.addColorStop(0, "#8ec8f0");
     sky.addColorStop(0.62, "#d5e7f4");
     sky.addColorStop(1, "#2f86c8");
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, w, Math.max(wy, 1));
-    const g = skyGeom(wy);
-    if (g) ctx.drawImage(g.img, g.x, g.y, g.dw, g.dh);
+    g.fillStyle = sky;
+    g.fillRect(0, 0, dw, dh);
+    g.drawImage(img, 0, 0, dw, dh);
+    MARKS.forEach((mark) => {
+      const sheet = markSheet(mark.id);
+      const mw = Math.max(64, dw * 0.055);
+      const mh = mw * sheet.height / sheet.width;
+      const x = mark.u * dw;
+      g.drawImage(sheet, x - mw / 2, dh - mh + 8, mw, mh);
+    });
+    skyBake = { canvas: c, key, dw, dh };
+    return skyBake;
+  }
+  function drawDaySky() {
+    const wy = waterY();
+    const bake = mobileGfx ? ensureSkyBake(wy) : null;
+    if (!bake) {
+      const sky = ctx.createLinearGradient(0, 0, 0, wy);
+      sky.addColorStop(0, "#8ec8f0");
+      sky.addColorStop(0.62, "#d5e7f4");
+      sky.addColorStop(1, "#2f86c8");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, w, Math.max(wy, 1));
+      const g = skyGeom(wy);
+      if (g) ctx.drawImage(g.img, g.x, g.y, g.dw, g.dh);
+      return;
+    }
+    const extra = bake.dw - w;
+    let x = 0;
+    if (extra > 2) {
+      const secs = scrollPx() / 28;
+      const period = 42;
+      const p = (secs % period) / period;
+      const tri = p < 0.5 ? p * 2 : (1 - p) * 2;
+      x = -extra * tri;
+    }
+    const srcX = Math.max(0, Math.min(bake.dw - 1, -x));
+    const srcW = Math.max(1, Math.min(w, bake.dw - srcX));
+    const srcY = Math.max(0, bake.dh - wy);
+    const srcH = Math.max(1, Math.min(wy, bake.dh - srcY));
+    if (showFps) perfHud.blit += 1;
+    ctx.drawImage(bake.canvas, srcX, srcY, srcW, srcH, 0, wy - srcH, srcW, srcH);
   }
   let skyMask = null;
   function ensureSkyMask() {
@@ -4027,20 +4093,24 @@ window.D21 = {
     drawDaySky();
     const img = SPRITES.bg;
     if (spriteReady(img)) {
-      ensureSeaTint();
-      const seaImg = seaTint || img;
-      const f = BG_WATER;
-      const sc = Math.max(w / seaImg.width, (h - wy + 40) / ((1 - f) * seaImg.height));
-      const dw = seaImg.width * sc;
-      const dh = seaImg.height * sc;
-      const top = wy - f * dh;
-      const shift = (scrollPx() * 0.22) % dw;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, wy - 1, w, h - wy + 2);
-      ctx.clip();
-      for (let i = -1; i < w / dw + 2; i++) ctx.drawImage(seaImg, -shift + i * dw, top, dw, dh);
-      ctx.restore();
+      if (mobileGfx && drawSeaBake(wy)) {
+        /* un blit 1:1 del fondo ya escalado */
+      } else {
+        ensureSeaTint();
+        const seaImg = seaTint || img;
+        const f = BG_WATER;
+        const sc = Math.max(w / seaImg.width, (h - wy + 40) / ((1 - f) * seaImg.height));
+        const dw = seaImg.width * sc;
+        const dh = seaImg.height * sc;
+        const top = wy - f * dh;
+        const shift = (scrollPx() * 0.22) % dw;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, wy - 1, w, h - wy + 2);
+        ctx.clip();
+        for (let i = -1; i < w / dw + 2; i++) ctx.drawImage(seaImg, -shift + i * dw, top, dw, dh);
+        ctx.restore();
+      }
     } else {
       const sea = ctx.createLinearGradient(0, wy, 0, h);
       sea.addColorStop(0, "#3aa6e0");
@@ -4048,18 +4118,23 @@ window.D21 = {
       ctx.fillStyle = sea;
       ctx.fillRect(0, wy, w, h - wy);
     }
-    const shine = ctx.createLinearGradient(0, wy, 0, wy + 86);
-    shine.addColorStop(0, "rgba(120, 206, 240, 0.55)");
-    shine.addColorStop(1, "rgba(8, 40, 80, 0)");
-    ctx.fillStyle = shine;
-    ctx.fillRect(0, wy, w, 86);
+    if (!mobileGfx) {
+      const shine = ctx.createLinearGradient(0, wy, 0, wy + 86);
+      shine.addColorStop(0, "rgba(120, 206, 240, 0.55)");
+      shine.addColorStop(1, "rgba(8, 40, 80, 0)");
+      ctx.fillStyle = shine;
+      ctx.fillRect(0, wy, w, 86);
+    }
     const phase = scrollPx() * 0.045;
     drawSwell(wy);
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, w, Math.max(1, wy - 1));
     ctx.clip();
-    if (adMode() === "banners") {
+    if (mobileGfx) {
+      const ad = currentBanner();
+      if (ad) drawBannerPlaceholder(ad, wy);
+    } else if (adMode() === "banners") {
       drawSkyFront(wy);
       const ad = currentBanner();
       if (ad) drawBannerPlaceholder(ad, wy);
@@ -4068,7 +4143,39 @@ window.D21 = {
       drawSkyFront(wy);
     }
     ctx.restore();
-    drawLandmarks(wy);
+    if (!mobileGfx) drawLandmarks(wy);
+    return true;
+  }
+  let seaBake = null;
+  function drawSeaBake(wy) {
+    ensureSeaTint();
+    const src = seaTint || SPRITES.bg;
+    if (!src) return false;
+    const seaH = Math.max(1, Math.round(h - wy));
+    const f = BG_WATER;
+    const srcW = src.width || src.naturalWidth;
+    const srcH = src.height || src.naturalHeight;
+    const sc = Math.max(w / srcW, (seaH + 40) / ((1 - f) * srcH));
+    const dw = Math.max(1, Math.ceil(srcW * sc));
+    const dh = Math.max(1, Math.ceil(srcH * sc));
+    const key = dw + "x" + seaH;
+    if (!seaBake || seaBake.key !== key) {
+      const c = document.createElement("canvas");
+      c.width = dw;
+      c.height = seaH;
+      const g = c.getContext("2d", { alpha: false });
+      g.drawImage(src, 0, 0, srcW, srcH, 0, -Math.round(f * dh), dw, dh);
+      seaBake = { canvas: c, key, dw };
+    }
+    const shift = Math.floor((scrollPx() * 0.22) % seaBake.dw);
+    const dwid = seaBake.dw;
+    if (showFps) perfHud.blit += 1;
+    ctx.drawImage(seaBake.canvas, shift, 0, Math.min(w, dwid - shift), seaH, 0, wy, Math.min(w, dwid - shift), seaH);
+    if (shift + w > dwid) {
+      const rest = shift + w - dwid;
+      if (showFps) perfHud.blit += 1;
+      ctx.drawImage(seaBake.canvas, 0, 0, rest, seaH, dwid - shift, wy, rest, seaH);
+    }
     return true;
   }
   let seaTint = null;
@@ -4208,6 +4315,39 @@ window.D21 = {
     const bh = Math.max(58, Math.min(92, wy * 0.16));
     const x = Math.round((w - bw) / 2);
     const y = Math.round(Math.max(128, wy * 0.34));
+    if (mobileGfx) {
+      const key = ad.id + "@" + bw + "x" + bh;
+      if (!ad._card || ad._card.key !== key) {
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, bw);
+        c.height = Math.max(1, bh);
+        const g = c.getContext("2d");
+        g.fillStyle = BANNER_YELLOW;
+        g.fillRect(0, 0, bw, bh);
+        g.strokeStyle = BANNER_INK;
+        g.lineWidth = 3;
+        g.strokeRect(1.5, 1.5, bw - 3, bh - 3);
+        const icon = bh - 20;
+        g.fillStyle = BANNER_CYAN;
+        g.fillRect(10, 10, icon, icon);
+        g.fillStyle = BANNER_INK;
+        g.textAlign = "center";
+        g.textBaseline = "middle";
+        g.font = "700 " + Math.round(icon * 0.34) + "px " + TIGHT;
+        g.fillText("d21", 10 + icon / 2, 10 + icon / 2);
+        g.textAlign = "left";
+        const lines = ad.lineas || [];
+        lines.slice(0, 3).forEach((ln, i) => {
+          g.font = "700 " + (i === 0 ? 16 : 13) + "px " + TIGHT;
+          g.fillStyle = BANNER_INK;
+          g.fillText(String(ln).slice(0, 64), 18 + icon, 20 + i * 22);
+        });
+        ad._card = { key, canvas: c };
+      }
+      if (showFps) perfHud.blit += 1;
+      ctx.drawImage(ad._card.canvas, x, y);
+      return;
+    }
     ctx.save();
     if (!lowFx && !(window.matchMedia && window.matchMedia("(pointer: coarse)").matches)) {
       ctx.shadowColor = "rgba(10,11,13,0.28)";
@@ -4347,7 +4487,9 @@ window.D21 = {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-    for (const b of bubbles) {
+    const bubbleN = mobileGfx ? 6 : bubbles.length;
+    for (let bi = 0; bi < bubbleN; bi++) {
+      const b = bubbles[bi];
       const bx = b.x * w;
       const by = wy + b.y * Math.max(10, bedY() - wy);
       ctx.strokeStyle = "rgba(255,255,255,0.35)";
@@ -5423,6 +5565,7 @@ window.D21 = {
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     ctx.clearRect(0, 0, w, h);
+    ctx.imageSmoothingQuality = mobileGfx ? "low" : "medium";
     ctx.save();
     if (shake > 0.4 && mode !== "title" && mode !== "over") {
       ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
@@ -5462,6 +5605,23 @@ window.D21 = {
       ctx.restore();
     }
     if (mode === "intro" || mode === "play" || mode === "pause") drawPauseIcon(pausePos().x, pausePos().y, pausePos().r);
+    if (showFps) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(0,0,0,0.72)";
+      ctx.fillRect(8, 8, 340, 22);
+      ctx.fillStyle = "#FFFD38";
+      ctx.font = "700 12px sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(Math.round(perfHud.fps) + " fps   " + perfHud.ms.toFixed(1) + " ms   dpr " + dpr.toFixed(2) + "   txt " + perfHud.text + "   blit " + perfHud.blit, 14, 19);
+      ctx.restore();
+      window.__fps = { fps: perfHud.fps, ms: perfHud.ms, dpr, px: Math.round(w * h * dpr * dpr), text: perfHud.text, blit: perfHud.blit, path: perfHud.path, w, h, mobile: mobileGfx };
+      perfHud.text = 0;
+      perfHud.path = 0;
+      perfHud.blit = 0;
+    }
   }
 
   function scaleWorld(sx, sy) {
@@ -5525,11 +5685,17 @@ window.D21 = {
     const turned = document.documentElement.classList.contains("turned");
     w = Math.max(1, Math.round(turned ? (stage.clientWidth || box.width || window.innerHeight) : ((vv && vv.width) || stage.clientWidth || window.innerWidth)));
     h = Math.max(1, Math.round(turned ? (stage.clientHeight || box.height || window.innerWidth) : ((vv && vv.height) || stage.clientHeight || window.innerHeight)));
-    const coarse = window.matchMedia("(pointer: coarse)").matches || Math.min(w, h) < 540;
-    let d = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2);
-    const maxPx = coarse ? 900 * 500 : 1600 * 900;
+    const coarse = window.matchMedia("(pointer: coarse)").matches || Math.min(w, h) < 700;
+    mobileGfx = coarse;
+    const raw = window.devicePixelRatio || 1;
+    let d = mobileGfx ? 1 : Math.min(raw, 2);
+    if (mobileGfx && perfHud.ms > 0 && perfHud.ms < 12) d = Math.min(1.25, raw);
+    if (mobileGfx && perfHud.ms > 16) d = 1;
+    const maxPx = mobileGfx ? w * h * 1.25 * 1.25 : 1600 * 900;
     if (w * h * d * d > maxPx) d = Math.max(1, Math.sqrt(maxPx / (w * h)));
     dpr = d;
+    skyBake = null;
+    seaBake = null;
     canvas.style.width = w + "px";
     canvas.style.height = h + "px";
     canvas.width = Math.max(1, Math.round(w * dpr));
@@ -5552,6 +5718,14 @@ window.D21 = {
     update(wall);
     draw();
     const ms = performance.now() - t0;
+    perfHud.acc += ms;
+    perfHud.n += 1;
+    if (perfHud.n >= 20) {
+      perfHud.ms = perfHud.acc / perfHud.n;
+      perfHud.fps = 1000 / Math.max(1, perfHud.ms);
+      perfHud.acc = 0;
+      perfHud.n = 0;
+    }
     frameSamples.push(ms);
     if (frameSamples.length > 40) frameSamples.shift();
     if (frameSamples.length > 12) {
